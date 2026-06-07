@@ -115,6 +115,8 @@ function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot }) {
         {noStreamer
           ? <div className="text-amber-500 text-[9px] leading-tight">⚠ รอจัดคน</div>
           : <div className="text-gray-600 text-[9px] leading-tight truncate">{s.streamerName||streamer?.name}</div>}
+        {s.location==='studio1'&&<div className="text-[8px] leading-tight text-purple-600 font-medium">🎬 Studio 1</div>}
+        {s.location==='studio2'&&<div className="text-[8px] leading-tight text-blue-600 font-medium">🎥 Studio 2</div>}
         <div className="text-[9px] leading-tight" style={{color:color+'cc'}}>{s.startTime}</div>
       </>}
       {isEnd && !isStart && (
@@ -731,6 +733,24 @@ export default function ScheduleBoard() {
                 <option value="approved">อนุมัติ</option>
               </select>
             </Field>}
+            <Field label="สถานที่ไลฟ์" className="col-span-2">
+              <div className="flex gap-2">
+                <button type="button"
+                  onClick={()=>setForm(f=>({...f,location:f.location?null:null}))}
+                  className="sr-only">-</button>
+                {[{val:'',label:'ไม่ระบุ'},{val:'studio1',label:'🎬 Studio 1'},{val:'studio2',label:'🎥 Studio 2'}].map(opt=>(
+                  <button key={opt.val} type="button"
+                    onClick={()=>setForm(f=>({...f,location:opt.val||null}))}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${
+                      (form.location||'')===(opt.val)
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-white text-gray-600 border-border hover:border-accent'
+                    }`}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </Field>
             <Field label="หมายเหตุ" className="col-span-2">
               <input type="text" value={form.notes||''} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} className="input w-full"/>
             </Field>
