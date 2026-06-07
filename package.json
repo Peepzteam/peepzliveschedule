@@ -1,0 +1,15 @@
+{
+  "name": "peepzliveschedule",
+  "version": "1.0.0",
+  "description": "Peepz Live Schedule \u2014 \u0e23\u0e30\u0e1a\u0e1a\u0e08\u0e31\u0e14\u0e15\u0e32\u0e23\u0e32\u0e07\u0e44\u0e25\u0e1f\u0e4c",
+  "scripts": {
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently --names \"\ud83c\udf4aserver,\u269b\ufe0fclient\" --prefix-colors \"yellow,cyan\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "NODE_ENV=production npm start --prefix server",
+    "setup": "cp .env.example .env && echo '\u2705 \u0e2a\u0e23\u0e49\u0e32\u0e07 .env \u0e41\u0e25\u0e49\u0e27 \u0e01\u0e23\u0e38\u0e13\u0e32\u0e41\u0e01\u0e49\u0e44\u0e02\u0e43\u0e2a\u0e48 API Keys \u0e01\u0e48\u0e2d\u0e19\u0e23\u0e31\u0e19\u0e04\u0e48\u0e32'"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
