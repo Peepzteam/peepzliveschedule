@@ -164,6 +164,78 @@ function buildCellMap(slots, dates, filterFn) {
   return cellMap;
 }
 
+// ─── Studio View ─────────────────────────────────────────────
+function StudioView({ year, month, data, onSlot }) {
+  const today = ds(new Date());
+  const days = getDaysInMonth(year, month);
+  const [selDate, setSelDate] = React.useState(days.includes(today) ? today : days[0]);
+
+  const sById = React.useMemo(()=>Object.fromEntries((data.streamers||[]).map(s=>[s.id,s])),[ data.streamers]);
+  const bById = React.useMemo(()=>Object.fromEntries((data.brands||[]).map(b=>[b.id,b])),[data.brands]);
+
+  const studioSlots = React.useMemo(()=>
+    (data.slots||[]).filter(s => s.date === selDate && (s.location === 'studio1' || s.location === 'studio2'))
+  ,[data.slots, selDate]);
+
+  const s1 = studioSlots.filter(s=>s.location==='studio1').sort((a,b)=>a.startTime.localeCompare(b.startTime));
+  const s2 = studioSlots.filter(s=>s.location==='studio2').sort((a,b)=>a.startTime.localeCompare(b.startTime));
+
+  function SlotCard({ s }) {
+    const brand = bById[s.brandId];
+    const streamer = sById[s.streamerId];
+    const color = brand?.color || '#9ca3af';
+    return (
+      <div onClick={()=>onSlot(s)} className="rounded-xl border-l-4 p-3 mb-2 cursor-pointer hover:brightness-95 transition-all"
+        style={{borderLeftColor: color, backgroundColor: color+'18'}}>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-bold" style={{color}}>{brand?.name || '-'}</span>
+          <span className="text-[10px] text-gray-400 font-mono">{s.startTime} – {s.endTime}</span>
+        </div>
+        <div className="text-[11px] text-gray-600">{streamer?.name || <span className="text-amber-500">⚠ รอจัดคน</span>}</div>
+        {s.notes && <div className="text-[10px] text-gray-400 mt-0.5 truncate">{s.notes}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden bg-bg">
+      {/* date picker */}
+      <div className="flex items-center gap-1 px-4 py-2 border-b border-border bg-white overflow-x-auto flex-shrink-0">
+        {days.map(d=>{
+          const dd = parseInt(d.slice(8));
+          const dow = DAY_TH[new Date(d).getDay()];
+          const isToday = d===today;
+          return (
+            <button key={d} onClick={()=>setSelDate(d)}
+              className={`flex flex-col items-center min-w-[36px] px-1.5 py-1 rounded-lg text-xs transition-all flex-shrink-0 ${
+                selDate===d ? 'bg-accent text-white font-bold' : isToday ? 'border border-accent text-accent font-semibold' : 'text-gray-500 hover:bg-gray-100'
+              }`}>
+              <span className="text-[9px] leading-tight">{dow}</span>
+              <span className="leading-tight">{dd}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* studio columns */}
+      <div className="flex flex-1 overflow-auto gap-4 p-4">
+        {[{id:'studio1',label:'🎬 Studio 1',slots:s1},{id:'studio2',label:'🎥 Studio 2',slots:s2}].map(studio=>(
+          <div key={studio.id} className="flex-1 min-w-[260px]">
+            <div className={`text-sm font-bold mb-3 px-3 py-2 rounded-xl ${studio.id==='studio1'?'bg-purple-50 text-purple-700':'bg-blue-50 text-blue-700'}`}>
+              {studio.label}
+              <span className="ml-2 text-[11px] font-normal opacity-70">{studio.slots.length} slot</span>
+            </div>
+            {studio.slots.length===0
+              ? <div className="text-center text-gray-300 text-sm py-10">ไม่มีการใช้ห้องวันนี้</div>
+              : studio.slots.map(s=><SlotCard key={s.id} s={s}/>)
+            }
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Month Grid ───────────────────────────────────────────────
 function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover }) {
   const days = getDaysInMonth(year, month);
@@ -574,7 +646,7 @@ export default function ScheduleBoard() {
 
         {/* view toggle */}
         <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
-          {[['month','รายเดือน'],['week','รายสัปดาห์']].map(([v,l])=>(
+          {[['month','รายเดือน'],['week','รายสัปดาห์'],['studio','🎬 ห้อง Studio']].map(([v,l])=>(
             <button key={v} onClick={()=>setView(v)}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${view===v?'bg-white text-accent shadow-sm':'text-gray-500 hover:text-gray-700'}`}>{l}</button>
           ))}
@@ -705,6 +777,8 @@ export default function ScheduleBoard() {
           <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">กำลังโหลด...</div>
         ):view==='month'?(
           <MonthGrid year={year} month={month} data={data} conflictSet={conflictSet} onSlot={openSlot} onEmpty={openEmpty} onHover={setHoverInfo}/>
+        ):view==='studio'?(
+          <StudioView year={year} month={month} data={data} onSlot={openSlot}/>
         ):(
           <WeekGrid week={curWeek} data={data} conflictSet={conflictSet} fStreamer={fS} fBrand={fB} onSlot={openSlot} onEmpty={openEmpty} onHover={setHoverInfo}/>
         )}
