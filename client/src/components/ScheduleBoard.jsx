@@ -707,7 +707,10 @@ export default function ScheduleBoard() {
         <Btn onClick={()=>{setForm({status:'pending'});setModal({type:'slot'});}} primary>+ Slot</Btn>
         <Btn onClick={()=>{setBulkBrand('');setBulkRows([EMPTY_ROW()]);setModal({type:'bulk'});}}>+ หลาย Slot</Btn>
         <Btn onClick={()=>{setImpBrand('');setImpLink('');setImpPrev(null);setModal({type:'import'});}}>↓ Import ชีท</Btn>
-        <Btn onClick={()=>window.print()}>🖨 PDF</Btn>
+        <Btn onClick={()=>{
+          const el = document.getElementById('print-view');
+          if(el){ el.style.display='block'; window.print(); el.style.display='none'; }
+        }}>🖨 PDF</Btn>
         <Btn onClick={()=>setModal({type:'history'})}>📋 ประวัติ</Btn>
         <Btn onClick={()=>{setModal({type:'manage'});}}>⚙ จัดการ</Btn>
       </div>
@@ -1221,12 +1224,111 @@ export default function ScheduleBoard() {
         </Modal>
       )}
 
+      {/* Print View — hidden normally, shown only when printing */}
+      <PrintView year={year} month={month} data={data}/>
+
       {/* Toast */}
       {toast&&(
         <div className={`fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl text-sm shadow-lg font-medium ${toast.type==='err'?'bg-red-500 text-white':'bg-gray-900 text-white'}`}>
           {toast.msg}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── PrintView — monthly schedule for PDF ─────────────────────
+function PrintView({ year, month, data }) {
+  const days = getDaysInMonth(year, month);
+  const DAY_SHORT = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+  const bById = Object.fromEntries((data.brands||[]).map(b=>[b.id,b]));
+  const sById = Object.fromEntries((data.streamers||[]).map(s=>[s.id,s]));
+
+  // group slots by date
+  const byDate = {};
+  for (const d of days) byDate[d] = [];
+  for (const s of (data.slots||[])) {
+    if (byDate[s.date]) byDate[s.date].push(s);
+  }
+  for (const d of days) {
+    byDate[d].sort((a,b) => a.startTime.localeCompare(b.startTime));
+  }
+
+  return (
+    <div id="print-view" style={{display:'none',fontFamily:'Noto Sans Thai,sans-serif'}}>
+      <div style={{padding:'12px 16px 8px',borderBottom:'2px solid #ff6b35',marginBottom:8,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:28,height:28,borderRadius:'50%',background:'#ff6b35',color:'#fff',fontWeight:'bold',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>P</div>
+          <div>
+            <div style={{fontWeight:'bold',fontSize:13,color:'#1a1a1a'}}>ตารางไลฟ์ — Peepz Team</div>
+            <div style={{fontSize:10,color:'#888'}}>{MONTH_TH[month]} {year}</div>
+          </div>
+        </div>
+        <div style={{fontSize:9,color:'#aaa'}}>พิมพ์: {new Date().toLocaleDateString('th-TH')}</div>
+      </div>
+
+      <table style={{width:'100%',borderCollapse:'collapse',fontSize:8,tableLayout:'fixed'}}>
+        <thead>
+          <tr>
+            {days.map(d=>{
+              const dt = new Date(d+'T00:00:00');
+              const dd = dt.getDate();
+              const dow = DAY_SHORT[dt.getDay()];
+              const isWeekend = dt.getDay()===0||dt.getDay()===6;
+              return (
+                <th key={d} style={{
+                  border:'1px solid #e2dcd5',
+                  padding:'3px 1px',
+                  textAlign:'center',
+                  background: isWeekend ? '#fff3ee' : '#f8f7f5',
+                  color: isWeekend ? '#ff6b35' : '#555',
+                  fontWeight:'bold',
+                  width: `${100/days.length}%`,
+                }}>
+                  <div style={{fontSize:9}}>{dow}</div>
+                  <div style={{fontSize:11}}>{dd}</div>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          <tr style={{verticalAlign:'top'}}>
+            {days.map(d=>(
+              <td key={d} style={{border:'1px solid #e2dcd5',padding:'2px 1px',verticalAlign:'top',minHeight:60}}>
+                {byDate[d].map(s=>{
+                  const brand = bById[s.brandId];
+                  const streamer = sById[s.streamerId];
+                  const color = brand?.color || '#9ca3af';
+                  return (
+                    <div key={s.id} style={{
+                      borderLeft:`2px solid ${color}`,
+                      background: color+'20',
+                      borderRadius:2,
+                      padding:'1px 2px',
+                      marginBottom:2,
+                    }}>
+                      <div style={{fontWeight:'bold',color,fontSize:7,lineHeight:1.2,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{brand?.name||'-'}</div>
+                      <div style={{color:'#555',fontSize:7,lineHeight:1.2}}>{s.startTime}–{s.endTime}</div>
+                      {streamer&&<div style={{color:'#888',fontSize:6.5,lineHeight:1.2,overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>{streamer.name}</div>}
+                    </div>
+                  );
+                })}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Legend */}
+      <div style={{marginTop:8,display:'flex',flexWrap:'wrap',gap:6}}>
+        {(data.brands||[]).map(b=>(
+          <div key={b.id} style={{display:'flex',alignItems:'center',gap:3,fontSize:8}}>
+            <div style={{width:8,height:8,borderRadius:2,background:b.color}}/>
+            <span style={{color:'#555'}}>{b.name}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

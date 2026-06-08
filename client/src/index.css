@@ -43,10 +43,12 @@ textarea { field-sizing: content; }
 
 /* ── Print / PDF ─────────────────────────────────── */
 @media print {
-  body { overflow: visible !important; background: white; }
-  header, .no-print { display: none !important; }
-  .print-area { overflow: visible !important; height: auto !important; }
+  @page { size: A4 landscape; margin: 8mm; }
+  body { overflow: visible !important; background: white !important; }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  /* ซ่อนทุกอย่างยกเว้น print-view */
+  body > #root > * { display: none !important; }
+  #print-view { display: block !important; }
 }
 
 /* ── Mobile responsive ───────────────────────────── */
