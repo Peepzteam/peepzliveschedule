@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const http = axios.create({ baseURL: '/api/team', withCredentials: true });
+const http = axios.create({ baseURL: '/api/team' });
 
 export default function Login({ onSuccess }) {
   const [pw, setPw] = useState('');
@@ -14,7 +14,10 @@ export default function Login({ onSuccess }) {
     setLoading(true);
     setError('');
     try {
-      await http.post('/login', { password: pw });
+      const res = await http.post('/login', { password: pw });
+      if (res.data.token) {
+        localStorage.setItem('peepz_token', res.data.token);
+      }
       onSuccess();
     } catch {
       setError('รหัสผ่านไม่ถูกต้อง');

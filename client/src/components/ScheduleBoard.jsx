@@ -2,7 +2,11 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
 // ใช้ relative URL → ผ่าน Vite proxy → session cookie ถูกส่งถูกต้อง
-const http = axios.create({ baseURL: '/api/schedule', withCredentials: true });
+const http = axios.create({ baseURL: '/api/schedule' });
+http.interceptors.request.use(cfg => {
+  cfg.headers['x-team-token'] = localStorage.getItem('peepz_token') || '';
+  return cfg;
+});
 const API_get  = (p, cfg) => http.get(p, cfg);
 const API_post = (p, d)   => http.post(p, d);
 const API_put  = (p, d)   => http.put(p, d);

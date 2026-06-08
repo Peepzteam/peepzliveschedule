@@ -3,10 +3,16 @@ import axios from 'axios';
 import Login from './components/Login.jsx';
 import ScheduleBoard from './components/ScheduleBoard.jsx';
 
-const teamHttp = axios.create({ baseURL: '/api/team', withCredentials: true });
+function getToken() { return localStorage.getItem('peepz_token') || ''; }
+
+const teamHttp = axios.create({ baseURL: '/api/team' });
+teamHttp.interceptors.request.use(cfg => {
+  cfg.headers['x-team-token'] = getToken();
+  return cfg;
+});
 
 export default function App() {
-  const [authed, setAuthed] = useState(null); // null=loading, true/false
+  const [authed, setAuthed] = useState(null);
 
   useEffect(() => {
     teamHttp.get('/check')
@@ -14,8 +20,8 @@ export default function App() {
       .catch(() => setAuthed(false));
   }, []);
 
-  async function logout() {
-    await teamHttp.post('/logout');
+  function logout() {
+    localStorage.removeItem('peepz_token');
     setAuthed(false);
   }
 
