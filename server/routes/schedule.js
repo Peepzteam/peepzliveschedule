@@ -77,6 +77,7 @@ function calcFifiHours(slots, year, month) {
 router.get('/data', (req, res) => {
   try {
     const data = readData();
+    if (!data.agencies) data.agencies = [];
     const { year, month } = req.query;
     const y = parseInt(year) || new Date().getFullYear();
     const m = parseInt(month) || new Date().getMonth() + 1;
@@ -530,6 +531,62 @@ router.post('/import-confirm', (req, res) => {
 
     writeData(data);
     res.json({ saved: saved.length, slots: saved });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Agencies (external agency contacts) ─────────────────────
+router.get('/agencies', (req, res) => {
+  try {
+    const data = readData();
+    res.json(data.agencies || []);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/agencies', (req, res) => {
+  try {
+    const data = readData();
+    if (!data.agencies) data.agencies = [];
+    const agency = {
+      id: randomUUID(),
+      name: req.body.name || '',
+      contactPerson: req.body.contactPerson || '',
+      phone: req.body.phone || '',
+    };
+    data.agencies.push(agency);
+    addHistory(data, 'add-agency', agency.name);
+    writeData(data);
+    res.json({ agency });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/agencies/:id', (req, res) => {
+  try {
+    const data = readData();
+    if (!data.agencies) data.agencies = [];
+    const idx = data.agencies.findIndex(a => a.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'ไม่พบ Agency' });
+    data.agencies[idx] = { ...data.agencies[idx], ...req.body, id: req.params.id };
+    addHistory(data, 'edit-agency', data.agencies[idx].name);
+    writeData(data);
+    res.json({ agency: data.agencies[idx] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/agencies/:id', (req, res) => {
+  try {
+    const data = readData();
+    if (!data.agencies) data.agencies = [];
+    data.agencies = data.agencies.filter(a => a.id !== req.params.id);
+    writeData(data);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

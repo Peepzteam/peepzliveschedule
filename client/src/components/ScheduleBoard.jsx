@@ -422,7 +422,7 @@ export default function ScheduleBoard() {
 
   // sync URL hash with view
   useEffect(()=>{ window.location.hash = view; },[view]);
-  const [data, setData]   = useState({streamers:[],brands:[],slots:[],conflicts:[],fifiHours:null});
+  const [data, setData]   = useState({streamers:[],brands:[],slots:[],conflicts:[],fifiHours:null,agencies:[]});
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState(null);
   const [form, setForm]   = useState({});
@@ -508,6 +508,18 @@ export default function ScheduleBoard() {
   async function deleteBrand(id){
     if(!confirm('ลบแบรนด์นี้?')) return;
     await API_del(`/brands/${id}`); toast_show('ลบแล้ว'); setModal(null); load();
+  }
+
+  // ── agency CRUD ───────────────────────────────────────────
+  async function saveAgency(){
+    if(!form.name) return toast_show('ใส่ชื่อ Agency','err');
+    if(modal?.item){ await API_put(`/agencies/${modal.item.id}`, form); toast_show('แก้ไข Agency แล้ว'); }
+    else { await API_post('/agencies', form); toast_show('เพิ่ม Agency แล้ว'); }
+    setModal({type:'manage'}); load();
+  }
+  async function deleteAgency(id){
+    if(!confirm('ลบ Agency นี้?')) return;
+    await API_del(`/agencies/${id}`); toast_show('ลบแล้ว'); setModal({type:'manage'}); load();
   }
 
   // ── bulk add ──────────────────────────────────────────────
@@ -897,8 +909,8 @@ export default function ScheduleBoard() {
 
       {/* ── Modal: Manage brands & streamers ── */}
       {modal?.type==='manage'&&(
-        <Modal title="จัดการแบรนด์และนักไลฟ์" onClose={()=>setModal(null)} wide>
-          <div className="grid grid-cols-2 gap-6">
+        <Modal title="จัดการแบรนด์ / นักไลฟ์ / Agency" onClose={()=>setModal(null)} wide>
+          <div className="grid grid-cols-3 gap-5">
             {/* Brands */}
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -932,6 +944,24 @@ export default function ScheduleBoard() {
                     <button onClick={()=>deleteStreamer(s.id)} className="text-[11px] text-gray-400 hover:text-red-500 px-1">ลบ</button>
                   </div>
                 ))}
+              </div>
+            </div>
+            {/* Agencies */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-bold text-gray-700">เอเจนซี่</h3>
+                <button onClick={()=>{setForm({});setModal({type:'agency'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
+              </div>
+              <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+                {sortByName(data.agencies||[]).map(a=>(
+                  <div key={a.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border hover:border-accent/30 bg-white transition-colors">
+                    <span className="text-sm text-gray-700 flex-1 truncate">{a.name}</span>
+                    {a.contactPerson&&<span className="text-[10px] text-gray-400 truncate">{a.contactPerson}</span>}
+                    <button onClick={()=>{setForm({...a});setModal({type:'agency',item:a});}} className="text-[11px] text-gray-400 hover:text-accent px-1">แก้ไข</button>
+                    <button onClick={()=>deleteAgency(a.id)} className="text-[11px] text-gray-400 hover:text-red-500 px-1">ลบ</button>
+                  </div>
+                ))}
+                {(data.agencies||[]).length===0&&<p className="text-xs text-gray-400 px-2">ยังไม่มี Agency</p>}
               </div>
             </div>
           </div>
@@ -972,13 +1002,16 @@ export default function ScheduleBoard() {
             </Field>
             <Field label="สีประจำตัว"><input type="color" value={form.color||'#888888'} onChange={e=>setForm(f=>({...f,color:e.target.value}))} className="h-9 w-full rounded-lg cursor-pointer border border-border"/></Field>
             {form.type==='freelance-agency'&&(
-              <Field label="Agency Admin" className="col-span-2">
+              <Field label="เอเจนซี่ (ต้นสังกัด)" className="col-span-2">
                 <select value={form.agencyAdmin||''} onChange={e=>setForm(f=>({...f,agencyAdmin:e.target.value}))} className="input w-full">
-                  <option value="">-- เลือก Admin --</option>
-                  {sortByName(data.streamers.filter(s=>s.type==='employee'||s.type==='freelance-office')).map(s=>(
-                    <option key={s.id} value={s.name}>{s.name}</option>
+                  <option value="">-- เลือกเอเจนซี่ --</option>
+                  {sortByName(data.agencies||[]).map(a=>(
+                    <option key={a.id} value={a.name}>{a.name}{a.contactPerson?` (${a.contactPerson})`:''}</option>
                   ))}
                 </select>
+                {(data.agencies||[]).length===0&&(
+                  <p className="text-[11px] text-gray-400 mt-1">ยังไม่มีเอเจนซี่ — ไปที่ ⚙ จัดการ → เอเจนซี่ เพื่อเพิ่มก่อนนะคะ</p>
+                )}
               </Field>
             )}
           </div>
@@ -986,6 +1019,28 @@ export default function ScheduleBoard() {
             {modal.item&&<button onClick={()=>deleteStreamer(modal.item.id)} className="mr-auto text-xs text-red-400 hover:text-red-600 px-2">ลบนักไลฟ์</button>}
             <button onClick={()=>setModal({type:'manage'})} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
             <button onClick={saveStreamer} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">บันทึก</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Modal: Agency form ── */}
+      {modal?.type==='agency'&&(
+        <Modal title={modal.item?'แก้ไขเอเจนซี่':'เพิ่มเอเจนซี่'} onClose={()=>setModal({type:'manage'})}>
+          <div className="flex flex-col gap-3">
+            <Field label="ชื่อเอเจนซี่">
+              <input type="text" value={form.name||''} onChange={e=>setForm(f=>({...f,name:e.target.value}))} className="input w-full" placeholder="ชื่อบริษัทเอเจนซี่"/>
+            </Field>
+            <Field label="ผู้ติดต่อ (Contact Person)">
+              <input type="text" value={form.contactPerson||''} onChange={e=>setForm(f=>({...f,contactPerson:e.target.value}))} className="input w-full" placeholder="ชื่อคนติดต่อจากเอเจนซี่"/>
+            </Field>
+            <Field label="เบอร์โทร / Line">
+              <input type="text" value={form.phone||''} onChange={e=>setForm(f=>({...f,phone:e.target.value}))} className="input w-full" placeholder="เบอร์โทรหรือ Line ID (ถ้ามี)"/>
+            </Field>
+          </div>
+          <div className="flex gap-2 mt-4 justify-end">
+            {modal.item&&<button onClick={()=>deleteAgency(modal.item.id)} className="mr-auto text-xs text-red-400 hover:text-red-600 px-2">ลบเอเจนซี่</button>}
+            <button onClick={()=>setModal({type:'manage'})} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
+            <button onClick={saveAgency} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">บันทึก</button>
           </div>
         </Modal>
       )}
