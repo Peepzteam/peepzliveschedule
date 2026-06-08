@@ -30,6 +30,17 @@ const DAY_TH   = ['อา','จ','อ','พ','พฤ','ศ','ส'];
 const MONTH_TH = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const EMPTY_ROW = () => ({ date:'', startTime:'', endTime:'', streamerId:'', platform:'', liveType:'', notes:'' });
 
+const PRESET_COLORS = [
+  '#FF6B6B','#FF9F43','#FECA57','#48DBFB','#1DD1A1',
+  '#6C5CE7','#FD79A8','#00B894','#E17055','#74B9FF',
+  '#A29BFE','#55EFC4','#FAB1A0','#81ECEC','#636E72',
+  '#E84393','#00CEC9','#FDCB6E','#6D214F','#182C61',
+];
+function pickUniqueColor(existingColors) {
+  const used = new Set((existingColors||[]).map(c=>(c||'').toLowerCase()));
+  return PRESET_COLORS.find(c => !used.has(c.toLowerCase())) || PRESET_COLORS[Math.floor(Math.random()*PRESET_COLORS.length)];
+}
+
 // ─── Mouse tooltip ───────────────────────────────────────────
 function CellTooltip({ info }) {
   if (!info) return null;
@@ -789,7 +800,7 @@ export default function ScheduleBoard() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-bold text-gray-700">นักไลฟ์</h3>
-                <button onClick={()=>{setForm({});setModal({type:'streamer'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
+                <button onClick={()=>{const autoColor=pickUniqueColor(data.streamers.map(s=>s.color));setForm({color:autoColor});setModal({type:'streamer'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
               </div>
               <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
                 {data.streamers.map(s=>(
