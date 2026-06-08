@@ -12,12 +12,14 @@ teamHttp.interceptors.request.use(cfg => {
 });
 
 export default function App() {
-  const [authed, setAuthed] = useState(null);
+  // ถ้ามี token ใน localStorage = เคย login แล้ว ให้เข้าได้เลยไม่ต้องรอ server
+  const [authed, setAuthed] = useState(!!getToken());
 
   useEffect(() => {
+    if (!getToken()) return; // ไม่มี token ไม่ต้องเช็ค
     teamHttp.get('/check')
-      .then(r => setAuthed(r.data.authed))
-      .catch(() => setAuthed(false));
+      .then(r => { if (!r.data.authed) { localStorage.removeItem('peepz_token'); setAuthed(false); } })
+      .catch(() => {}); // ถ้า network error ก็ยังใช้ได้อยู่
   }, []);
 
   function logout() {
