@@ -44,7 +44,26 @@ function pickUniqueColor(existingColors) {
 // ─── Mouse tooltip ───────────────────────────────────────────
 function CellTooltip({ info }) {
   if (!info) return null;
-  const { x, y, date, hour } = info;
+  const { x, y, date, hour, slot, brand, streamer } = info;
+
+  // Slot hover — show full slot info
+  if (slot) {
+    const color = brand?.color || '#9ca3af';
+    return (
+      <div className="fixed z-50 pointer-events-none"
+        style={{ left: x + 14, top: y - 8, transform: 'translateY(-100%)' }}>
+        <div className="bg-gray-900 text-white text-xs px-3 py-2 rounded-xl shadow-xl whitespace-nowrap flex flex-col gap-0.5">
+          <span className="font-bold" style={{color}}>{brand?.name || slot.brandId}</span>
+          <span className="text-gray-200 font-semibold">{slot.startTime} – {slot.endTime}</span>
+          {streamer && <span className="text-gray-400">{streamer.name}</span>}
+          {slot.location==='studio1' && <span className="text-purple-400 text-[10px]">🎬 Studio 1</span>}
+          {slot.location==='studio2' && <span className="text-blue-400 text-[10px]">🎥 Studio 2</span>}
+        </div>
+      </div>
+    );
+  }
+
+  // Empty cell hover — show date/hour
   const d = new Date(date + 'T00:00:00');
   const dayName = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัส','ศุกร์','เสาร์'][d.getDay()];
   const dateLabel = `${dayName} ${d.getDate()} ${['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'][d.getMonth()+1]} ${d.getFullYear()}`;
@@ -103,7 +122,7 @@ function useDrag(onEmpty) {
 }
 
 // ─── Cell block — renders one slot segment in a cell ─────────
-function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot }) {
+function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot, onHover }) {
   const streamer = sById[s.streamerId], brand = bById[s.brandId];
   const noStreamer = !s.streamerId && !s.streamerName;
   const isConflict = conflictSet.has(s.id);
@@ -112,6 +131,8 @@ function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot }) {
   const isEnd   = pos === 'end'   || pos === 'single';
   return (
     <div onClick={e=>{e.stopPropagation();onSlot(s);}}
+      onMouseEnter={e=>{e.stopPropagation();onHover&&onHover({x:e.clientX,y:e.clientY,slot:s,brand,streamer});}}
+      onMouseLeave={e=>{e.stopPropagation();onHover&&onHover(null);}}
       className={`w-full h-full cursor-pointer overflow-hidden transition-all hover:brightness-95 ${isConflict?'ring-1 ring-red-500':''}`}
       style={{
         backgroundColor: color + (isStart||pos==='single' ? '30' : '20'),
@@ -287,7 +308,7 @@ function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover })
                       <div className="flex flex-row h-full w-full" style={{gap:1}}>
                         {entries.map(({slot:s,pos})=>(
                           <div key={s.id} className="flex-1 min-w-0 h-full">
-                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot}/>
+                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot} onHover={onHover}/>
                           </div>
                         ))}
                       </div>
@@ -357,7 +378,7 @@ function WeekGrid({ week, data, conflictSet, fStreamer, fBrand, onSlot, onEmpty,
                       <div className="flex flex-row h-full w-full" style={{gap:1}}>
                         {entries.map(({slot:s,pos})=>(
                           <div key={s.id} className="flex-1 min-w-0 h-full">
-                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot}/>
+                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot} onHover={onHover}/>
                           </div>
                         ))}
                       </div>
