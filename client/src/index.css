@@ -40,3 +40,19 @@ textarea { field-sizing: content; }
 .badge-pending  { background: #fff7e6; color: #d97706; border: 1px solid #fcd34d; }
 .badge-confirmed { background: #eff6ff; color: #2563eb; border: 1px solid #93c5fd; }
 .badge-approved  { background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; }
+
+/* ── Print / PDF ─────────────────────────────────── */
+@media print {
+  body { overflow: visible !important; background: white; }
+  header, .no-print { display: none !important; }
+  .print-area { overflow: visible !important; height: auto !important; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+}
+
+/* ── Mobile responsive ───────────────────────────── */
+@media (max-width: 768px) {
+  body { overflow: auto; }
+  .mobile-sidebar { display: none; }
+  .mobile-toolbar-scroll { overflow-x: auto; flex-wrap: nowrap !important; }
+  .mobile-toolbar-scroll > * { flex-shrink: 0; }
+}

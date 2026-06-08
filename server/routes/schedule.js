@@ -15,6 +15,18 @@ function writeData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
+function addHistory(data, action, detail) {
+  if (!data.history) data.history = [];
+  data.history.unshift({
+    id: randomUUID(),
+    at: new Date().toISOString(),
+    action,
+    detail,
+  });
+  // keep last 200 entries
+  if (data.history.length > 200) data.history = data.history.slice(0, 200);
+}
+
 // ─── helpers ────────────────────────────────────────────────
 function timeToMinutes(t) {
   const [h, m] = t.split(':').map(Number);
@@ -70,7 +82,7 @@ router.get('/data', (req, res) => {
     const m = parseInt(month) || new Date().getMonth() + 1;
     const conflicts = detectConflicts(data.slots);
     const fifiHours = calcFifiHours(data.slots, y, m);
-    res.json({ ...data, conflicts, fifiHours });
+    res.json({ ...data, conflicts, fifiHours, history: data.history || [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -118,6 +130,7 @@ router.post('/slots', (req, res) => {
     }
 
     data.slots.push(slot);
+    addHistory(data, 'เพิ่ม Slot', `${slot.date} ${slot.startTime}-${slot.endTime} (brandId: ${slot.brandId})`);
     writeData(data);
     res.json({ slot });
   } catch (e) {
@@ -136,7 +149,9 @@ router.put('/slots/:id', (req, res) => {
     const data = readData();
     const idx = data.slots.findIndex(s => s.id === req.params.id);
     if (idx === -1) return res.status(404).json({ error: 'ไม่พบ slot' });
-    data.slots[idx] = { ...data.slots[idx], ...req.body, id: req.params.id };
+    const old = data.slots[idx];
+    data.slots[idx] = { ...old, ...req.body, id: req.params.id };
+    addHistory(data, 'แก้ไข Slot', `${data.slots[idx].date} ${data.slots[idx].startTime}-${data.slots[idx].endTime} (brandId: ${data.slots[idx].brandId})`);
     writeData(data);
     res.json({ slot: data.slots[idx] });
   } catch (e) {
@@ -147,7 +162,9 @@ router.put('/slots/:id', (req, res) => {
 router.delete('/slots/:id', (req, res) => {
   try {
     const data = readData();
+    const slot = data.slots.find(s => s.id === req.params.id);
     data.slots = data.slots.filter(s => s.id !== req.params.id);
+    if (slot) addHistory(data, 'ลบ Slot', `${slot.date} ${slot.startTime}-${slot.endTime} (brandId: ${slot.brandId})`);
     writeData(data);
     res.json({ ok: true });
   } catch (e) {

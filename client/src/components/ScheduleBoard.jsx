@@ -665,7 +665,7 @@ export default function ScheduleBoard() {
     <div className="flex flex-col h-full overflow-hidden bg-bg">
 
       {/* ── Toolbar ── */}
-      <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border bg-white flex-shrink-0">
+      <div className="mobile-toolbar-scroll flex flex-wrap items-center gap-2 px-4 py-2 border-b border-border bg-white flex-shrink-0">
         {/* month nav */}
         <div className="flex items-center gap-1">
           <button onClick={()=>{if(month===1){setMonth(12);setYear(y=>y-1);}else setMonth(m=>m-1);setWeekOff(0);}}
@@ -707,13 +707,15 @@ export default function ScheduleBoard() {
         <Btn onClick={()=>{setForm({status:'pending'});setModal({type:'slot'});}} primary>+ Slot</Btn>
         <Btn onClick={()=>{setBulkBrand('');setBulkRows([EMPTY_ROW()]);setModal({type:'bulk'});}}>+ หลาย Slot</Btn>
         <Btn onClick={()=>{setImpBrand('');setImpLink('');setImpPrev(null);setModal({type:'import'});}}>↓ Import ชีท</Btn>
+        <Btn onClick={()=>window.print()}>🖨 PDF</Btn>
+        <Btn onClick={()=>setModal({type:'history'})}>📋 ประวัติ</Btn>
         <Btn onClick={()=>{setModal({type:'manage'});}}>⚙ จัดการ</Btn>
       </div>
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
         {/* ── Sidebar ── */}
-        <div className="w-52 flex-shrink-0 border-r border-border overflow-y-auto p-3 flex flex-col gap-3 bg-white">
+        <div className="mobile-sidebar w-52 flex-shrink-0 border-r border-border overflow-y-auto p-3 flex flex-col gap-3 bg-white">
 
           {/* Fifi */}
           {fifi&&(
@@ -1191,6 +1193,33 @@ export default function ScheduleBoard() {
       )}
 
       <CellTooltip info={hoverInfo}/>
+
+      {/* ── Modal: History ── */}
+      {modal?.type==='history'&&(
+        <Modal title="📋 ประวัติการแก้ไข" onClose={()=>setModal(null)} wide>
+          {(!data.history||data.history.length===0)
+            ? <div className="text-center text-gray-400 py-8 text-sm">ยังไม่มีประวัติการแก้ไขค่ะ</div>
+            : (
+              <div className="overflow-y-auto max-h-[60vh] divide-y divide-border">
+                {data.history.map(h=>{
+                  const d = new Date(h.at);
+                  const dateStr = `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+                  const actionColor = h.action.includes('เพิ่ม') ? 'text-green-600 bg-green-50' : h.action.includes('ลบ') ? 'text-red-500 bg-red-50' : 'text-blue-600 bg-blue-50';
+                  return (
+                    <div key={h.id} className="flex items-start gap-3 py-2.5 px-1">
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 mt-0.5 ${actionColor}`}>{h.action}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-gray-700 truncate">{h.detail}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{dateStr}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          }
+        </Modal>
+      )}
 
       {/* Toast */}
       {toast&&(
