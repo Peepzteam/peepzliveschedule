@@ -16,6 +16,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const isProd = process.env.NODE_ENV === 'production';
+if (isProd) app.set('trust proxy', 1);
 const allowedOrigins = isProd
   ? [process.env.FRONTEND_URL].filter(Boolean)
   : ['http://localhost:5173', 'http://localhost:3000'];
