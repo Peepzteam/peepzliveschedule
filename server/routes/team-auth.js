@@ -23,9 +23,16 @@ router.post('/login', (req, res) => {
   }
 });
 
+function extractToken(req) {
+  // Support both Authorization: Bearer <token> and x-team-token header
+  const auth = req.headers['authorization'] || '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7);
+  return req.headers['x-team-token'] || '';
+}
+
 // GET /api/team/check
 router.get('/check', (req, res) => {
-  const token = req.headers['x-team-token'];
+  const token = extractToken(req);
   res.json({ authed: token === VALID_TOKEN });
 });
 
@@ -36,7 +43,7 @@ router.post('/logout', (req, res) => {
 
 // middleware — protect schedule routes
 function requireTeamAuth(req, res, next) {
-  const token = req.headers['x-team-token'];
+  const token = extractToken(req);
   if (token === VALID_TOKEN) return next();
   res.status(401).json({ error: 'กรุณา login ก่อน' });
 }

@@ -7,7 +7,8 @@ function getToken() { return localStorage.getItem('peepz_token') || ''; }
 
 const teamHttp = axios.create({ baseURL: '/api/team' });
 teamHttp.interceptors.request.use(cfg => {
-  cfg.headers['x-team-token'] = getToken();
+  const t = getToken();
+  if (t) cfg.headers['Authorization'] = `Bearer ${t}`;
   return cfg;
 });
 

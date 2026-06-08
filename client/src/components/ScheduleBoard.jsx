@@ -4,7 +4,8 @@ import axios from 'axios';
 // ใช้ relative URL → ผ่าน Vite proxy → session cookie ถูกส่งถูกต้อง
 const http = axios.create({ baseURL: '/api/schedule' });
 http.interceptors.request.use(cfg => {
-  cfg.headers['x-team-token'] = localStorage.getItem('peepz_token') || '';
+  const t = localStorage.getItem('peepz_token') || '';
+  if (t) cfg.headers['Authorization'] = `Bearer ${t}`;
   return cfg;
 });
 const API_get  = (p, cfg) => http.get(p, cfg);
