@@ -1,12 +1,12 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
+  command = "npm run build --prefix client"
+  publish = "client/dist"
 
 [functions]
-  directory = "../netlify/functions"
+  directory = "netlify/functions"
   node_bundler = "esbuild"
 
-# ── API & Auth → Netlify Function (ไม่ต้องใช้ Railway แล้ว) ──
+# ── API & Auth → Netlify Function ────────────────────────────
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api"
