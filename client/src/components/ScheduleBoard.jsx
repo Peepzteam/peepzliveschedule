@@ -408,6 +408,99 @@ function WeekGrid({ week, data, conflictSet, fStreamer, fBrand, onSlot, onEmpty,
   );
 }
 
+// ─── Quick Edit Panel ─────────────────────────────────────────
+function QuickEditPanel({ slot, data, bById, onClose, onSave, onDelete, onFullEdit }) {
+  const [form, setForm] = useState({...slot});
+  useEffect(()=>{ setForm({...slot}); },[slot?.id]);
+  const brand = bById[form.brandId];
+  const color = brand?.color || '#9ca3af';
+  const d = new Date((form.date||'2000-01-01')+'T00:00:00');
+  const dateLabel = d.toLocaleDateString('th-TH',{weekday:'short',day:'numeric',month:'short'});
+  return (
+    <>
+      <div className="fixed inset-0 z-30 bg-black/10" onClick={onClose}/>
+      <div className="fixed right-0 top-0 h-full w-80 bg-white shadow-2xl z-40 flex flex-col border-l border-border">
+        {/* Header */}
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border flex-shrink-0" style={{backgroundColor:color+'18'}}>
+          <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{backgroundColor:color}}/>
+          <span className="font-bold text-sm flex-1 truncate text-gray-800">{brand?.name||form.brandId||'—'}</span>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-base leading-none">✕</button>
+        </div>
+        {/* Date/Time */}
+        <div className="px-4 py-2.5 border-b border-border/50 bg-gray-50 flex-shrink-0">
+          <div className="text-[11px] text-gray-400">{dateLabel}</div>
+          <div className="text-base font-bold text-gray-800">{form.startTime} – {form.endTime}</div>
+        </div>
+        {/* Fields */}
+        <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3">
+          <div>
+            <div className="text-[11px] text-gray-400 font-medium mb-1">นักไลฟ์</div>
+            <select value={form.streamerId||''} onChange={e=>setForm(f=>({...f,streamerId:e.target.value}))} className="input w-full">
+              <option value="">-- ยังไม่ระบุ --</option>
+              {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <div className="text-[11px] text-gray-400 font-medium mb-1">สถานะ</div>
+            <div className="flex gap-1.5">
+              {[['pending','รอยืนยัน'],['confirmed','ยืนยัน'],['approved','อนุมัติ']].map(([v,l])=>(
+                <button key={v} onClick={()=>setForm(f=>({...f,status:v}))}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${(form.status||'pending')===v?'bg-accent text-white border-accent':'bg-white text-gray-600 border-border hover:border-accent'}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] text-gray-400 font-medium mb-1">ห้องไลฟ์</div>
+            <div className="flex gap-1.5">
+              {[{val:null,label:'ไม่ระบุ'},{val:'studio1',label:'🎬 S1'},{val:'studio2',label:'🎥 S2'}].map(opt=>(
+                <button key={opt.val||'none'} onClick={()=>setForm(f=>({...f,location:opt.val}))}
+                  className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${(form.location||null)===opt.val?'bg-accent text-white border-accent':'bg-white text-gray-600 border-border hover:border-accent'}`}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="text-[11px] text-gray-400 font-medium mb-1">Platform</div>
+            <select value={form.platform||''} onChange={e=>setForm(f=>({...f,platform:e.target.value}))} className="input w-full">
+              <option value="">-</option>
+              <option>Shopee</option><option>TikTok</option><option>Lazada</option><option>Facebook</option>
+            </select>
+          </div>
+          <div>
+            <div className="text-[11px] text-gray-400 font-medium mb-1">หมายเหตุ</div>
+            <input type="text" value={form.notes||''} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} className="input w-full" placeholder="หมายเหตุ (ถ้ามี)"/>
+          </div>
+        </div>
+        {/* Actions */}
+        <div className="px-4 py-3 border-t border-border flex flex-col gap-2 flex-shrink-0">
+          <button onClick={()=>onSave(form)} className="w-full py-2.5 rounded-xl bg-accent text-white text-sm font-bold hover:opacity-90 shadow-sm transition-all">💾 บันทึก</button>
+          <div className="flex gap-2">
+            <button onClick={onFullEdit} className="flex-1 py-2 rounded-lg border border-border text-xs text-gray-600 hover:border-accent hover:text-accent transition-all">แก้ไขทั้งหมด →</button>
+            <button onClick={onDelete} className="py-2 px-3 rounded-lg border border-red-200 text-xs text-red-400 hover:bg-red-50 transition-all">ลบ</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Auto-link helper ─────────────────────────────────────────
+function buildAutoLinks(slotsWithName, streamers) {
+  const norm = s => (s||'').toLowerCase().replace(/\s+/g,'');
+  const matches = {};
+  const names = [...new Set(slotsWithName.map(s=>s.streamerName))].filter(Boolean);
+  for (const name of names) {
+    const n = norm(name);
+    let found = streamers.find(s=>norm(s.name)===n);
+    if (!found) found = streamers.find(s=>norm(s.name).includes(n)||n.includes(norm(s.name)));
+    matches[name] = found ? { streamerId: found.id, streamerName: found.name, auto: true } : { streamerId:'', auto:false };
+  }
+  return matches;
+}
+
 // ─── Main ─────────────────────────────────────────────────────
 export default function ScheduleBoard() {
   const now = new Date();
@@ -426,6 +519,9 @@ export default function ScheduleBoard() {
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState(null);
   const [form, setForm]   = useState({});
+  const [quickSlot, setQuickSlot] = useState(null); // quick-edit panel
+  const [autoLinkOpen, setAutoLinkOpen] = useState(false);
+  const [autoLinkMap, setAutoLinkMap] = useState({});
   const [fS, setFS] = useState('all');
   const [fB, setFB] = useState('all');
   const [toast, setToast] = useState(null);
@@ -680,8 +776,47 @@ export default function ScheduleBoard() {
     setTimeout(() => setCopied(false), 2500);
   }
 
-  function openSlot(s){setForm({...s});setModal({type:'slot',slot:s});}
+  // quick-edit panel for existing slots; full modal for new slots
+  function openSlot(s){ setQuickSlot(s); }
   function openEmpty(dstr, startTime, endTime=''){setForm({date:dstr,startTime,endTime,status:'pending'});setModal({type:'slot'});}
+
+  async function quickSave(slotData) {
+    try {
+      await API_put(`/slots/${slotData.id}`, slotData);
+      toast_show('บันทึกแล้ว ✓');
+      setQuickSlot(null);
+      load();
+    } catch(e) { toast_show(e.response?.data?.error||e.message,'err'); }
+  }
+  async function quickDelete(id) {
+    if(!confirm('ลบ slot นี้?')) return;
+    await API_del(`/slots/${id}`); toast_show('ลบแล้ว'); setQuickSlot(null); load();
+  }
+  function quickToFull() {
+    if(!quickSlot) return;
+    setForm({...quickSlot}); setModal({type:'slot',slot:quickSlot}); setQuickSlot(null);
+  }
+
+  // auto-link: slots that have streamerName but no streamerId
+  const needsLink = data.slots.filter(s => !s.streamerId && s.streamerName);
+  function openAutoLink() {
+    const m = buildAutoLinks(needsLink, data.streamers);
+    setAutoLinkMap(m);
+    setAutoLinkOpen(true);
+  }
+  async function confirmAutoLink() {
+    let saved = 0;
+    for (const s of needsLink) {
+      const match = autoLinkMap[s.streamerName];
+      if (match?.streamerId) {
+        try { await API_put(`/slots/${s.id}`, {...s, streamerId: match.streamerId}); saved++; }
+        catch {}
+      }
+    }
+    toast_show(`เชื่อมนักไลฟ์ ${saved} slot แล้ว`);
+    setAutoLinkOpen(false);
+    load();
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-bg">
@@ -806,6 +941,18 @@ export default function ScheduleBoard() {
                 </button>
               ))}
               {unassigned.length>6&&<div className="text-[10px] text-gray-400 text-center">+{unassigned.length-6} เพิ่มเติม</div>}
+            </div>
+          )}
+
+          {/* Auto-link — มีชื่อแต่ยังไม่เชื่อมระบบ */}
+          {needsLink.length>0&&(
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-2">
+              <div className="text-[11px] text-blue-600 font-bold mb-1">🔗 ยังไม่เชื่อมนักไลฟ์ ({needsLink.length})</div>
+              <div className="text-[10px] text-gray-500 mb-2">มีชื่อใน import แต่ยังไม่ลิงก์ระบบ</div>
+              <button onClick={openAutoLink}
+                className="w-full py-1.5 rounded-lg bg-blue-500 text-white text-[11px] font-bold hover:bg-blue-600 transition-all">
+                เชื่อมอัตโนมัติ →
+              </button>
             </div>
           )}
 
@@ -1295,6 +1442,63 @@ export default function ScheduleBoard() {
               </div>
             )
           }
+        </Modal>
+      )}
+
+      {/* ── Quick Edit Panel ── */}
+      {quickSlot&&(
+        <QuickEditPanel
+          slot={quickSlot}
+          data={data}
+          bById={bById}
+          onClose={()=>setQuickSlot(null)}
+          onSave={quickSave}
+          onDelete={()=>quickDelete(quickSlot.id)}
+          onFullEdit={quickToFull}
+        />
+      )}
+
+      {/* ── Auto-link Modal ── */}
+      {autoLinkOpen&&(
+        <Modal title="🔗 เชื่อมนักไลฟ์อัตโนมัติ" onClose={()=>setAutoLinkOpen(false)} wide>
+          <p className="text-xs text-gray-500 mb-3">ระบบจับคู่ชื่อจาก Import กับนักไลฟ์ในระบบ — ตรวจสอบแล้วกด <b>ยืนยันเชื่อม</b></p>
+          <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
+            {Object.entries(autoLinkMap).map(([name, match])=>(
+              <div key={name} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-border bg-white">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-gray-700 truncate">"{name}"</div>
+                  <div className="text-[10px] text-gray-400">
+                    {needsLink.filter(s=>s.streamerName===name).length} slot
+                  </div>
+                </div>
+                <span className="text-gray-300 text-xs">→</span>
+                <select
+                  value={autoLinkMap[name]?.streamerId||''}
+                  onChange={e=>setAutoLinkMap(m=>({...m,[name]:{...m[name],streamerId:e.target.value}}))}
+                  className="input w-40 flex-shrink-0">
+                  <option value="">ข้ามไป</option>
+                  {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                {match.auto&&match.streamerId
+                  ? <span className="text-[10px] text-green-600 font-bold bg-green-50 px-2 py-0.5 rounded-full flex-shrink-0">✓ จับคู่แล้ว</span>
+                  : <span className="text-[10px] text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full flex-shrink-0">เลือกเอง</span>
+                }
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between items-center mt-4 pt-3 border-t border-border">
+            <span className="text-xs text-gray-400">
+              จับคู่อัตโนมัติ {Object.values(autoLinkMap).filter(m=>m.auto&&m.streamerId).length} / {Object.keys(autoLinkMap).length} ชื่อ
+            </span>
+            <div className="flex gap-2">
+              <button onClick={()=>setAutoLinkOpen(false)} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
+              <button onClick={confirmAutoLink}
+                disabled={!Object.values(autoLinkMap).some(m=>m.streamerId)}
+                className="px-5 py-2 rounded-lg bg-blue-500 text-white text-xs font-bold hover:bg-blue-600 disabled:opacity-40 shadow-sm">
+                ✓ ยืนยันเชื่อม {Object.values(autoLinkMap).filter(m=>m.streamerId).length} ชื่อ
+              </button>
+            </div>
+          </div>
         </Modal>
       )}
 
