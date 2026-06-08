@@ -404,8 +404,14 @@ export default function ScheduleBoard() {
   const [year, setYear]   = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth()+1);
   const [weekOff, setWeekOff] = useState(0);
-  const [view, setView]   = useState('month');
+  const [view, setView]   = useState(()=>{
+    const h = window.location.hash.replace('#','');
+    return ['month','week','studio'].includes(h) ? h : 'month';
+  });
   const [hoverInfo, setHoverInfo] = useState(null);
+
+  // sync URL hash with view
+  useEffect(()=>{ window.location.hash = view; },[view]);
   const [data, setData]   = useState({streamers:[],brands:[],slots:[],conflicts:[],fifiHours:null});
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState(null);
