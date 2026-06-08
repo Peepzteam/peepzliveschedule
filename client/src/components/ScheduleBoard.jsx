@@ -34,6 +34,15 @@ const DAY_TH   = ['อา','จ','อ','พ','พฤ','ศ','ส'];
 const MONTH_TH = ['','ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
 const EMPTY_ROW = () => ({ date:'', startTime:'', endTime:'', streamerId:'', platform:'', liveType:'', notes:'' });
 
+// เรียงไทยก่อน อังกฤษทีหลัง
+function thSort(a, b) {
+  const isTh = s => /^[ก-๙]/.test(s);
+  if (isTh(a) && !isTh(b)) return -1;
+  if (!isTh(a) && isTh(b)) return 1;
+  return a.localeCompare(b, 'th');
+}
+function sortByName(arr) { return [...arr].sort((a,b) => thSort(a.name||'', b.name||'')); }
+
 const PRESET_COLORS = [
   '#FF6B6B','#FF9F43','#FECA57','#48DBFB','#1DD1A1',
   '#6C5CE7','#FD79A8','#00B894','#E17055','#74B9FF',
@@ -696,11 +705,11 @@ export default function ScheduleBoard() {
         {view==='week'&&<>
           <select value={fS} onChange={e=>setFS(e.target.value)} className="text-xs border border-border rounded-lg px-2 py-1.5 text-gray-600 bg-white">
             <option value="all">นักไลฟ์ทุกคน</option>
-            {data.streamers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+            {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <select value={fB} onChange={e=>setFB(e.target.value)} className="text-xs border border-border rounded-lg px-2 py-1.5 text-gray-600 bg-white">
             <option value="all">ทุกแบรนด์</option>
-            {data.brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+            {sortByName(data.brands).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </>}
 
@@ -827,13 +836,13 @@ export default function ScheduleBoard() {
             <Field label="แบรนด์">
               <select value={form.brandId||''} onChange={e=>setForm(f=>({...f,brandId:e.target.value}))} className="input w-full">
                 <option value="">-- เลือกแบรนด์ --</option>
-                {data.brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+                {sortByName(data.brands).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </Field>
             <Field label="นักไลฟ์">
               <select value={form.streamerId||''} onChange={e=>setForm(f=>({...f,streamerId:e.target.value}))} className="input w-full">
                 <option value="">-- ยังไม่ระบุ --</option>
-                {data.streamers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
             </Field>
             <Field label="วันที่">
@@ -896,7 +905,7 @@ export default function ScheduleBoard() {
                 <button onClick={()=>{setForm({});setModal({type:'brand'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
               </div>
               <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-                {data.brands.map(b=>(
+                {sortByName(data.brands).map(b=>(
                   <div key={b.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border hover:border-accent/30 bg-white transition-colors">
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:b.color}}/>
                     <span className="text-sm text-gray-700 flex-1 truncate">{b.name}</span>
@@ -913,7 +922,7 @@ export default function ScheduleBoard() {
                 <button onClick={()=>{const autoColor=pickUniqueColor(data.streamers.map(s=>s.color));setForm({color:autoColor});setModal({type:'streamer'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
               </div>
               <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-                {data.streamers.map(s=>(
+                {sortByName(data.streamers).map(s=>(
                   <div key={s.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border hover:border-accent/30 bg-white transition-colors">
                     <div className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:s.color}}/>
                     <span className="text-sm text-gray-700 flex-1 truncate">{s.name}</span>
@@ -977,7 +986,7 @@ export default function ScheduleBoard() {
           <Field label="แบรนด์ (ใช้กับทุกแถว)" className="mb-3">
             <select value={bulkBrand} onChange={e=>setBulkBrand(e.target.value)} className="input w-full">
               <option value="">-- เลือกแบรนด์ --</option>
-              {data.brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+              {sortByName(data.brands).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </Field>
           <div className="overflow-x-auto">
@@ -992,7 +1001,7 @@ export default function ScheduleBoard() {
                     <td className="py-1 pr-1"><input type="date" value={row.date} onChange={e=>updateRow(i,'date',e.target.value)} className="input w-32"/></td>
                     <td className="py-1 pr-1"><input type="time" value={row.startTime} onChange={e=>updateRow(i,'startTime',e.target.value)} className="input w-24"/></td>
                     <td className="py-1 pr-1"><input type="time" value={row.endTime} onChange={e=>updateRow(i,'endTime',e.target.value)} className="input w-24"/></td>
-                    <td className="py-1 pr-1"><select value={row.streamerId} onChange={e=>updateRow(i,'streamerId',e.target.value)} className="input w-28"><option value="">-</option>{data.streamers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></td>
+                    <td className="py-1 pr-1"><select value={row.streamerId} onChange={e=>updateRow(i,'streamerId',e.target.value)} className="input w-28"><option value="">-</option>{sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select></td>
                     <td className="py-1 pr-1"><select value={row.platform} onChange={e=>updateRow(i,'platform',e.target.value)} className="input w-24"><option value="">-</option><option>Shopee</option><option>TikTok</option><option>Lazada</option><option>Facebook</option></select></td>
                     <td className="py-1 pr-1"><select value={row.liveType} onChange={e=>updateRow(i,'liveType',e.target.value)} className="input w-24"><option value="">-</option><option>Normal</option><option>D-DAY</option><option>Mid Month</option><option>PAYDAY</option></select></td>
                     <td className="py-1 pr-1"><input type="text" value={row.notes} onChange={e=>updateRow(i,'notes',e.target.value)} className="input w-28"/></td>
@@ -1030,7 +1039,7 @@ export default function ScheduleBoard() {
               <Field label="แบรนด์" className="mb-3">
                 <select value={impBrand} onChange={e=>setImpBrand(e.target.value)} className="input w-full">
                   <option value="">-- เลือกแบรนด์ที่จะ import --</option>
-                  {data.brands.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
+                  {sortByName(data.brands).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
               </Field>
 
@@ -1083,7 +1092,7 @@ export default function ScheduleBoard() {
                         <span className="text-gray-400">→</span>
                         <select value={impMap[name]||''} onChange={e=>setImpMap(m=>({...m,[name]:e.target.value}))} className="input flex-1">
                           <option value="">ข้ามไป</option>
-                          {data.streamers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                          {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
                       </div>
                     ))}
