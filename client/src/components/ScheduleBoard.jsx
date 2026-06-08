@@ -180,7 +180,7 @@ function useDrag(onEmpty) {
 // platform → short emoji label
 const PLAT_ICON = { Shopee:'🟠', TikTok:'🎵', Lazada:'🔵', Facebook:'📘' };
 // status → dot color
-const STATUS_DOT = { confirmed:'#22c55e', approved:'#3b82f6', pending:'#f59e0b' };
+const STATUS_DOT = { pending:'#f59e0b', confirmed:'#3b82f6', approved:'#22c55e' };
 
 function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot, onHover, selectMode, selected, toggleSelect }) {
   const streamer = sById[s.streamerId], brand = bById[s.brandId];
@@ -922,6 +922,13 @@ export default function ScheduleBoard() {
     await withSaving(async()=>{
       await Promise.all([...selected].map(id => API_put(`/slots/${id}`, {streamerId: streamerId||null, streamerName:''})));
       toast_show(`✓ เปลี่ยนนักไลฟ์ ${selected.size} slot แล้ว`);
+      exitSelect(); setBulkModal(null); load(true);
+    });
+  }
+  async function bulkSetLocation(location) {
+    await withSaving(async()=>{
+      await Promise.all([...selected].map(id => API_put(`/slots/${id}`, {location: location||null})));
+      toast_show(`✓ กำหนดห้อง ${selected.size} slot แล้ว`);
       exitSelect(); setBulkModal(null); load(true);
     });
   }
@@ -2145,6 +2152,11 @@ export default function ScheduleBoard() {
               className="text-xs px-3 py-1.5 rounded-lg bg-purple-500 hover:bg-purple-400 transition-colors font-semibold">
               🎤 จัดนักไลฟ์
             </button>
+            {/* assign studio */}
+            <button onClick={()=>setBulkModal('location')}
+              className="text-xs px-3 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition-colors font-semibold">
+              🎬 ลง Studio
+            </button>
             {/* delete */}
             <button onClick={bulkDelete}
               className="text-xs px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-400 transition-colors font-semibold">
@@ -2160,11 +2172,31 @@ export default function ScheduleBoard() {
       {bulkModal==='status'&&(
         <Modal title={`เปลี่ยนสถานะ ${selected.size} slot`} onClose={()=>setBulkModal(null)}>
           <div className="flex flex-col gap-2">
-            {[['pending','🟡 รอยืนยัน','#f59e0b'],['confirmed','🟢 ยืนยันแล้ว','#22c55e'],['approved','🔵 อนุมัติ','#3b82f6']].map(([v,l,c])=>(
+            {[['pending','รอยืนยัน','#f59e0b'],['confirmed','ยืนยันแล้ว','#3b82f6'],['approved','อนุมัติ','#22c55e']].map(([v,l,c])=>(
               <button key={v} onClick={()=>bulkSetStatus(v)}
                 className="flex items-center gap-3 px-4 py-3 rounded-xl border border-border hover:border-accent hover:bg-gray-50 transition-all text-left">
                 <span className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:c}}/>
                 <span className="text-sm font-semibold text-gray-700">{l}</span>
+                <svg className="ml-auto w-4 h-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Bulk modal: assign location ── */}
+      {bulkModal==='location'&&(
+        <Modal title={`กำหนดห้อง ${selected.size} slot`} onClose={()=>setBulkModal(null)}>
+          <div className="flex flex-col gap-2">
+            {[
+              {id:'studio1', label:'🎬 S Room (Studio 1)', color:'#7c3aed'},
+              {id:'studio2', label:'🎥 M Room (Studio 2)', color:'#1d4ed8'},
+              {id:null,      label:'— ไม่ระบุห้อง',        color:'#9ca3af'},
+            ].map(opt=>(
+              <button key={String(opt.id)} onClick={()=>bulkSetLocation(opt.id)}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl border border-border hover:border-accent hover:bg-gray-50 transition-all text-left">
+                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:opt.color}}/>
+                <span className="text-sm font-semibold text-gray-700">{opt.label}</span>
                 <svg className="ml-auto w-4 h-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
               </button>
             ))}
