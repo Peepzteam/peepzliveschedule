@@ -51,6 +51,13 @@ textarea { field-sizing: content; }
   #print-view { display: block !important; }
 }
 
+/* ── Loading bar animation ───────────────────────── */
+@keyframes loadbar {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(0%); }
+  100% { transform: translateX(100%); }
+}
+
 /* ── Mobile responsive ───────────────────────────── */
 @media (max-width: 768px) {
   body { overflow: auto; }

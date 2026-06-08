@@ -24,6 +24,47 @@ function timeToMinutes(t) {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + (m || 0);
 }
+
+const DAY_LABELS = ['อา','จ','อ','พ','พฤ','ศ','ส'];
+const DAY_LABELS_FULL = ['อาทิตย์','จันทร์','อังคาร','พุธ','พฤหัส','ศุกร์','เสาร์'];
+
+// ─── Availability helpers ─────────────────────────────────────
+// คืน list ของ streamer พร้อม avail status: 'free'|'busy'|'off'|'unknown'
+function getAvailableStreamers(data, date, startTime, endTime, excludeSlotId = null) {
+  if (!date || !startTime || !endTime) return [];
+  const dow = new Date(date + 'T00:00:00').getDay(); // 0=Sun
+  const sStart = timeToMinutes(startTime);
+  const sEnd   = timeToMinutes(endTime);
+
+  return (data.streamers || []).map(streamer => {
+    // 1. เช็ค conflict กับ slot ที่มีอยู่ (same brand = ไม่ busy เพราะ multi-platform)
+    const busy = (data.slots || []).some(s => {
+      if (s.streamerId !== streamer.id) return false;
+      if (s.date !== date) return false;
+      if (s.id === excludeSlotId) return false;
+      // same brand = OK (streaming same brand on multiple platforms simultaneously)
+      // *** brandId ของ slot ที่กำลังเพิ่ม/แก้ต้องส่งมาด้วยถ้าจะใช้ feature นี้ ***
+      // ตอนนี้ไม่มีข้อมูล brandId ของ slot ใหม่ใน scope นี้ → ยังเช็คแบบเดิม
+      const sE = timeToMinutes(s.endTime);
+      const sS2 = timeToMinutes(s.startTime);
+      const adjEnd = sE <= sS2 ? sE + 1440 : sE; // overnight fix
+      const adjNew = sEnd <= sStart ? sEnd + 1440 : sEnd;
+      return !(adjEnd <= sStart || sS2 >= adjNew);
+    });
+    if (busy) return { ...streamer, avail: 'busy' };
+
+    // 2. เช็ค availability schedule
+    const avails = (data.availability || []).filter(a => a.streamerId === streamer.id && a.type === 'weekly');
+    if (avails.length === 0) return { ...streamer, avail: 'unknown' };
+
+    const covered = avails.some(a =>
+      (a.days || []).includes(dow) &&
+      timeToMinutes(a.startTime) <= sStart &&
+      timeToMinutes(a.endTime)   >= sEnd
+    );
+    return { ...streamer, avail: covered ? 'free' : 'off' };
+  });
+}
 function getDaysInMonth(year, month) {
   const days = [], date = new Date(year, month - 1, 1);
   while (date.getMonth() === month - 1) { days.push(new Date(date)); date.setDate(date.getDate() + 1); }
@@ -136,37 +177,86 @@ function useDrag(onEmpty) {
 }
 
 // ─── Cell block — renders one slot segment in a cell ─────────
-function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot, onHover }) {
+// platform → short emoji label
+const PLAT_ICON = { Shopee:'🟠', TikTok:'🎵', Lazada:'🔵', Facebook:'📘' };
+// status → dot color
+const STATUS_DOT = { confirmed:'#22c55e', approved:'#3b82f6', pending:'#f59e0b' };
+
+function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot, onHover, selectMode, selected, toggleSelect }) {
   const streamer = sById[s.streamerId], brand = bById[s.brandId];
   const noStreamer = !s.streamerId && !s.streamerName;
   const isConflict = conflictSet.has(s.id);
   const color = brand?.color || streamer?.color || '#9ca3af';
   const isStart = pos === 'start' || pos === 'single';
   const isEnd   = pos === 'end'   || pos === 'single';
+  const isSingle = pos === 'single';
+  const dotColor = STATUS_DOT[s.status] || STATUS_DOT.pending;
+  const isSelected = selectMode && selected?.has(s.id);
+
+  // hex → rgb helper for gradient
+  const hex2rgb = (hex) => {
+    const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+    return `${r},${g},${b}`;
+  };
+  const rgb = hex2rgb(color.length===7 ? color : '#9ca3af');
+
   return (
-    <div onClick={e=>{e.stopPropagation();onSlot(s);}}
+    <div onClick={e=>{e.stopPropagation(); selectMode ? toggleSelect(s.id) : onSlot(s);}}
       onMouseEnter={e=>{e.stopPropagation();onHover&&onHover({x:e.clientX,y:e.clientY,slot:s,brand,streamer});}}
       onMouseLeave={e=>{e.stopPropagation();onHover&&onHover(null);}}
-      className={`w-full h-full cursor-pointer overflow-hidden transition-all hover:brightness-95 ${isConflict?'ring-1 ring-red-500':''}`}
+      className={`relative w-full h-full cursor-pointer overflow-hidden transition-all group
+        ${isConflict&&!isSelected?'outline outline-1 outline-red-400 outline-offset-[-1px]':''}
+        ${isSelected?'outline outline-2 outline-accent outline-offset-[-2px]':''}`}
       style={{
-        backgroundColor: color + (isStart||pos==='single' ? '30' : '20'),
-        borderLeft: `3px solid ${color}`,
-        borderTop:    isStart ? `2px solid ${color}` : 'none',
-        borderBottom: isEnd   ? `2px solid ${color}` : 'none',
-        borderRadius: isStart&&isEnd ? '6px' : isStart ? '6px 6px 0 0' : isEnd ? '0 0 6px 6px' : '0',
-        paddingLeft: 4, paddingRight: 2,
+        background: isSelected
+          ? `rgba(${rgb},0.35)`
+          : isStart
+            ? `linear-gradient(135deg, rgba(${rgb},0.18) 0%, rgba(${rgb},0.10) 100%)`
+            : `rgba(${rgb},0.08)`,
+        borderLeft: `3px solid ${isSelected?color:color}`,
+        borderTop:    isStart ? `1.5px solid rgba(${rgb},0.35)` : 'none',
+        borderBottom: isEnd   ? `1.5px solid rgba(${rgb},0.20)` : 'none',
+        borderRight:  '1.5px solid transparent',
+        borderRadius: isSingle ? '7px' : isStart ? '7px 7px 0 0' : isEnd ? '0 0 7px 7px' : '0',
+        paddingLeft: 5, paddingRight: 3,
+        boxShadow: isStart ? `inset 0 1px 0 rgba(255,255,255,0.6)` : 'none',
       }}>
-      {isStart && <>
-        <div className="font-bold truncate text-[10px] leading-tight pt-0.5" style={{color}}>{brand?.name||s.brandId}</div>
-        {noStreamer
-          ? <div className="text-amber-500 text-[9px] leading-tight">⚠ รอจัดคน</div>
-          : <div className="text-gray-600 text-[9px] leading-tight truncate">{s.streamerName||streamer?.name}</div>}
-        {s.location==='studio1'&&<div className="text-[8px] leading-tight text-purple-600 font-medium">🎬 Studio 1</div>}
-        {s.location==='studio2'&&<div className="text-[8px] leading-tight text-blue-600 font-medium">🎥 Studio 2</div>}
-        <div className="text-[9px] leading-tight" style={{color:color+'cc'}}>{s.startTime}</div>
-      </>}
+      {isStart && (
+        <div className="flex flex-col h-full justify-start pt-[3px] gap-[1px]">
+          {/* Brand name + status dot */}
+          <div className="flex items-center gap-1 min-w-0">
+            <span className="font-bold truncate text-[10px] leading-tight flex-1" style={{color}}>{brand?.name||s.brandId}</span>
+            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{backgroundColor:dotColor}}/>
+          </div>
+          {/* Streamer */}
+          {noStreamer
+            ? <div className="text-[9px] leading-tight font-medium" style={{color:'#f59e0b'}}>⚠ รอจัดคน</div>
+            : <div className="text-[9px] leading-tight truncate" style={{color:`rgba(${rgb},1)`, opacity:0.75}}>{s.streamerName||streamer?.name}</div>}
+          {/* start time + platform (bottom of start cell) */}
+          <div className="flex items-center gap-1 mt-auto pb-[2px]">
+            <span className="text-[8px] font-mono leading-none" style={{color:`rgba(${rgb},0.85)`}}>{s.startTime}</span>
+            {s.platform&&PLAT_ICON[s.platform]&&<span className="text-[8px] leading-none">{PLAT_ICON[s.platform]}</span>}
+            {(s.location==='studio1'||s.location==='studio2')&&(
+              <span className="text-[7px] leading-none px-1 rounded-full font-semibold"
+                style={{backgroundColor:s.location==='studio1'?'#ede9fe':'#dbeafe', color:s.location==='studio1'?'#7c3aed':'#1d4ed8'}}>
+                {s.location==='studio1'?'S1':'S2'}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {/* select checkmark */}
+      {selectMode && isStart && (
+        <div className={`absolute top-[3px] right-[3px] w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold border transition-all ${
+          isSelected ? 'bg-accent border-accent text-white' : 'bg-white/80 border-gray-300 text-transparent'
+        }`}>✓</div>
+      )}
+      {/* end time — absolute inside relative wrapper, clipped by overflow-hidden */}
       {isEnd && !isStart && (
-        <div className="text-[9px] absolute bottom-0.5 left-1" style={{color:color+'cc'}}>{s.endTime}</div>
+        <div className="absolute bottom-[3px] left-[5px] text-[8px] font-mono leading-none"
+          style={{color:`rgba(${rgb},0.8)`}}>
+          {s.endTime}
+        </div>
       )}
     </div>
   );
@@ -178,107 +268,225 @@ function buildCellMap(slots, dates, filterFn) {
   const cellMap = {};
   const relevant = filterFn ? slots.filter(filterFn) : slots;
 
+  function addCells(date, fromIdx, toIdx, slotObj, posStart, posEnd, totalOffset) {
+    // adds cells for date from fromIdx (inclusive) to toIdx (exclusive)
+    for (let i = fromIdx; i < toIdx; i++) {
+      const key = `${date}_${i}`;
+      if (!cellMap[key]) cellMap[key] = [];
+      const cellNum = totalOffset + (i - fromIdx);
+      let pos = 'mid';
+      if (posStart && cellNum === 0 && posEnd) pos = 'single';
+      else if (posStart && cellNum === 0) pos = 'start';
+      else if (posEnd && i === toIdx - 1) pos = 'end';
+      cellMap[key].push({ slot: slotObj, pos });
+    }
+  }
+
   for (const s of relevant) {
-    if (!dates.includes(s.date)) continue;
+    const dateIdx = dates.indexOf(s.date);
+    if (dateIdx === -1) continue;
     const si = HOURS.indexOf(s.startTime);
     if (si === -1) continue;
     let ei = HOURS.indexOf(s.endTime);
-    if (ei === -1) ei = HOURS.length;
-    const span = Math.max(ei - si, 1);
+    if (ei === -1) ei = HOURS.length; // unknown end → go to end of day
 
-    for (let i = si; i < si + span; i++) {
-      const key = `${s.date}_${i}`;
-      if (!cellMap[key]) cellMap[key] = [];
-      let pos = 'mid';
-      if (i === si && span === 1) pos = 'single';
-      else if (i === si) pos = 'start';
-      else if (i === si + span - 1) pos = 'end';
-      cellMap[key].push({ slot: s, pos });
+    const crossesMidnight = ei < si; // endTime is earlier than startTime in HOURS
+    const endsMidnight    = ei === 0;  // ends exactly at 00:00
+
+    if (crossesMidnight || endsMidnight) {
+      // Part 1: current date from si → end of day (HOURS.length)
+      const part1Len = HOURS.length - si;
+      const part2Len = ei; // cells on next day (0 if ends at 00:00)
+      const hasNextDay = part2Len > 0 && dateIdx + 1 < dates.length;
+
+      addCells(s.date, si, HOURS.length, s, true, !hasNextDay, 0);
+
+      // Part 2: next date from 0 → ei
+      if (hasNextDay) {
+        addCells(dates[dateIdx + 1], 0, ei, s, false, true, part1Len);
+      }
+    } else {
+      // Normal same-day slot
+      const span = Math.max(ei - si, 1);
+      addCells(s.date, si, si + span, s, true, true, 0);
     }
   }
   return cellMap;
 }
 
 // ─── Studio View ─────────────────────────────────────────────
-function StudioView({ year, month, data, onSlot }) {
-  const today = ds(new Date());
-  const days = getDaysInMonth(year, month);
-  const [selDate, setSelDate] = React.useState(days.includes(today) ? today : days[0]);
+// Hours shown in studio grid (07:00 → 02:00 next day)
+const STUDIO_HOURS = [
+  '07:00','08:00','09:00','10:00','11:00','12:00',
+  '13:00','14:00','15:00','16:00','17:00','18:00',
+  '19:00','20:00','21:00','22:00','23:00','00:00','01:00','02:00'
+];
+const COL_W  = 46;  // px per day column
+const ROW_H  = 26;  // px per hour row
+const TIME_W = 46;  // px for time label column
 
-  const sById = React.useMemo(()=>Object.fromEntries((data.streamers||[]).map(s=>[s.id,s])),[ data.streamers]);
-  const bById = React.useMemo(()=>Object.fromEntries((data.brands||[]).map(b=>[b.id,b])),[data.brands]);
+function StudioView({ year, month, data, onSlot, onEmpty }) {
+  const today  = ds(new Date());
+  const days   = getDaysInMonth(year, month);
+  const dayStrs = React.useMemo(() => days.map(ds), [year, month]);
 
-  const studioSlots = React.useMemo(()=>
-    (data.slots||[]).filter(s => s.date === selDate && (s.location === 'studio1' || s.location === 'studio2'))
-  ,[data.slots, selDate]);
+  const sById = React.useMemo(() => Object.fromEntries((data.streamers||[]).map(s=>[s.id,s])), [data.streamers]);
+  const bById = React.useMemo(() => Object.fromEntries((data.brands||[]).map(b=>[b.id,b])), [data.brands]);
 
-  const s1 = studioSlots.filter(s=>s.location==='studio1').sort((a,b)=>a.startTime.localeCompare(b.startTime));
-  const s2 = studioSlots.filter(s=>s.location==='studio2').sort((a,b)=>a.startTime.localeCompare(b.startTime));
+  // Build occupancy map: `${roomId}_${date}_${hour}` → slot
+  const cellMap = React.useMemo(() => {
+    const map = {};
+    const studioSlots = (data.slots||[]).filter(s => s.location === 'studio1' || s.location === 'studio2');
+    const addRange = (roomId, date, fromHIdx, toHIdx, slot) => {
+      for (let h = fromHIdx; h < toHIdx; h++) {
+        const key = `${roomId}_${date}_${HOURS[h]}`;
+        if (!map[key]) map[key] = slot;
+      }
+    };
+    for (const s of studioSlots) {
+      const si = HOURS.indexOf(s.startTime);
+      if (si === -1) continue;
+      let ei = HOURS.indexOf(s.endTime);
+      if (ei === -1) ei = HOURS.length;
+      if (ei < si) { // crosses midnight
+        addRange(s.location, s.date, si, HOURS.length, s);
+        const dIdx = dayStrs.indexOf(s.date);
+        if (dIdx >= 0 && dIdx + 1 < dayStrs.length) addRange(s.location, dayStrs[dIdx+1], 0, ei, s);
+      } else {
+        addRange(s.location, s.date, si, ei, s);
+      }
+    }
+    return map;
+  }, [data.slots, dayStrs]);
 
-  function SlotCard({ s }) {
-    const brand = bById[s.brandId];
-    const streamer = sById[s.streamerId];
-    const color = brand?.color || '#9ca3af';
+  function RoomGrid({ roomId, roomLabel, roomColor }) {
+    // Count slots this month for this room
+    const count = (data.slots||[]).filter(s=>s.location===roomId && dayStrs.includes(s.date)).length;
     return (
-      <div onClick={()=>onSlot(s)} className="rounded-xl border-l-4 p-3 mb-2 cursor-pointer hover:brightness-95 transition-all"
-        style={{borderLeftColor: color, backgroundColor: color+'18'}}>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-bold" style={{color}}>{brand?.name || '-'}</span>
-          <span className="text-[10px] text-gray-400 font-mono">{s.startTime} – {s.endTime}</span>
+      <div>
+        {/* Room section header */}
+        <div className="flex items-center gap-2 border-y border-border"
+          style={{borderLeft:`3px solid ${roomColor}`, paddingLeft:8, paddingTop:4, paddingBottom:4, backgroundColor: roomColor+'10'}}>
+          <span className="text-xs font-bold" style={{color:roomColor}}>{roomLabel}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{backgroundColor:roomColor+'20',color:roomColor}}>{count} slot</span>
         </div>
-        <div className="text-[11px] text-gray-600">{streamer?.name || <span className="text-amber-500">⚠ รอจัดคน</span>}</div>
-        {s.notes && <div className="text-[10px] text-gray-400 mt-0.5 truncate">{s.notes}</div>}
+        {/* Hour rows */}
+        {STUDIO_HOURS.map((hour, hIdx) => {
+          const isNight = ['00:00','01:00','02:00'].includes(hour);
+          return (
+            <div key={hour} className="flex"
+              style={{height:ROW_H, borderBottom:`1px solid ${isNight?'#e2dcd5':'#ece7e1'}`}}>
+              {/* Time label — sticky left */}
+              <div className="flex-shrink-0 flex items-center justify-end pr-1.5 border-r border-gray-200 sticky left-0 z-10"
+                style={{width:TIME_W, backgroundColor:isNight?'#f5f3f0':'#f8f7f5', fontSize:9, color:'#9ca3af', fontFamily:'monospace'}}>
+                {hour}
+              </div>
+              {/* Day cells */}
+              {dayStrs.map(d => {
+                const key = `${roomId}_${d}_${hour}`;
+                const slot = cellMap[key];
+                const streamer = slot ? sById[slot.streamerId] : null;
+                const sColor   = streamer?.color || '#9ca3af';
+                const name     = slot ? (slot.streamerName || streamer?.name || '?') : null;
+                const shortName = name ? name.split(' ')[0] : null;
+
+                // Show label only at first visible row of this slot
+                const prevHour = hIdx > 0 ? STUDIO_HOURS[hIdx-1] : null;
+                const prevKey  = prevHour ? `${roomId}_${d}_${prevHour}` : null;
+                const prevSlot = prevKey ? cellMap[prevKey] : null;
+                const isFirst  = slot && (!prevSlot || prevSlot.id !== slot.id);
+
+                const isToday  = d === today;
+                const dotColor = STATUS_DOT[slot?.status] || STATUS_DOT.pending;
+
+                return (
+                  <div key={d}
+                    title={slot ? `${name} | ${slot.platform||''} | ${slot.startTime}–${slot.endTime}` : `คลิกเพิ่ม slot ${d} ${hour}`}
+                    className="flex-shrink-0 border-r border-gray-100 cursor-pointer hover:brightness-[0.93] transition-all relative overflow-hidden"
+                    style={{
+                      width: COL_W,
+                      backgroundColor: slot ? sColor+'2e' : isToday ? '#fff8f5' : undefined,
+                    }}
+                    onClick={() => slot ? onSlot(slot) : onEmpty && onEmpty(d, hour, STUDIO_HOURS[hIdx+1]||'02:00', roomId)}>
+                    {slot && isFirst && (
+                      <div className="absolute inset-x-0 top-0 flex flex-col px-0.5 pt-0.5 overflow-hidden"
+                        style={{borderTop:`2px solid ${sColor}`}}>
+                        <span className="text-[8px] font-bold leading-tight truncate" style={{color:sColor}}>{shortName}</span>
+                        {slot.platform&&<span className="text-[7px] leading-none truncate opacity-75" style={{color:sColor}}>{slot.platform}</span>}
+                      </div>
+                    )}
+                    {/* Status dot on last row */}
+                    {slot && (() => {
+                      const nextHour = STUDIO_HOURS[hIdx+1];
+                      const nextKey  = nextHour ? `${roomId}_${d}_${nextHour}` : null;
+                      const nextSlot = nextKey ? cellMap[nextKey] : null;
+                      const isLast   = !nextSlot || nextSlot.id !== slot.id;
+                      return isLast ? (
+                        <div className="absolute bottom-[2px] right-[2px] w-1.5 h-1.5 rounded-full"
+                          style={{backgroundColor:dotColor}}/>
+                      ) : null;
+                    })()}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
     );
   }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-bg">
-      {/* date picker */}
-      <div className="flex items-center gap-1 px-4 py-2 border-b border-border bg-white overflow-x-auto flex-shrink-0">
-        {days.map(d=>{
-          const dd = parseInt(d.slice(8));
-          const dow = DAY_TH[new Date(d).getDay()];
-          const isToday = d===today;
-          return (
-            <button key={d} onClick={()=>setSelDate(d)}
-              className={`flex flex-col items-center min-w-[36px] px-1.5 py-1 rounded-lg text-xs transition-all flex-shrink-0 ${
-                selDate===d ? 'bg-accent text-white font-bold' : isToday ? 'border border-accent text-accent font-semibold' : 'text-gray-500 hover:bg-gray-100'
-              }`}>
-              <span className="text-[9px] leading-tight">{dow}</span>
-              <span className="leading-tight">{dd}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* studio columns */}
-      <div className="flex flex-1 overflow-auto gap-4 p-4">
-        {[{id:'studio1',label:'🎬 Studio 1',slots:s1},{id:'studio2',label:'🎥 Studio 2',slots:s2}].map(studio=>(
-          <div key={studio.id} className="flex-1 min-w-[260px]">
-            <div className={`text-sm font-bold mb-3 px-3 py-2 rounded-xl ${studio.id==='studio1'?'bg-purple-50 text-purple-700':'bg-blue-50 text-blue-700'}`}>
-              {studio.label}
-              <span className="ml-2 text-[11px] font-normal opacity-70">{studio.slots.length} slot</span>
-            </div>
-            {studio.slots.length===0
-              ? <div className="text-center text-gray-300 text-sm py-10">ไม่มีการใช้ห้องวันนี้</div>
-              : studio.slots.map(s=><SlotCard key={s.id} s={s}/>)
-            }
+      <div className="flex-1 overflow-auto">
+        {/* Sticky column+day header */}
+        <div className="flex sticky top-0 z-30 border-b-2 border-border bg-white shadow-sm">
+          {/* Corner */}
+          <div className="flex-shrink-0 sticky left-0 z-40 bg-white border-r border-gray-200 flex items-end justify-center pb-1"
+            style={{width:TIME_W}}>
+            <span className="text-[9px] text-gray-300 font-bold">HR</span>
           </div>
-        ))}
+          {/* Day columns */}
+          {dayStrs.map(d => {
+            const dt   = new Date(d+'T00:00:00');
+            const dd   = dt.getDate();
+            const dow  = DAY_LABELS[dt.getDay()];
+            const isSun = dt.getDay()===0, isSat = dt.getDay()===6;
+            const isToday = d===today;
+            // count studio slots this day
+            const dayCnt = (data.slots||[]).filter(s=>s.date===d&&(s.location==='studio1'||s.location==='studio2')).length;
+            return (
+              <div key={d} className="flex-shrink-0 flex flex-col items-center justify-end pb-0.5 border-r border-gray-100"
+                style={{width:COL_W, backgroundColor: isToday?'#fff3ee': undefined}}>
+                <span className="text-[8px] leading-none" style={{color:isSun?'#ef4444':isSat?'#3b82f6':'#c4bdb6'}}>{dow}</span>
+                <span className="text-[11px] font-bold leading-tight" style={{color:isToday?'#ff6b35':isSun?'#ef4444':isSat?'#3b82f6':'#1a1a1a'}}>{dd}</span>
+                {dayCnt>0&&<span className="text-[7px] leading-none text-gray-300">{dayCnt}</span>}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* S Room */}
+        <RoomGrid roomId="studio1" roomLabel="🎬 S Room" roomColor="#7c3aed"/>
+        {/* spacer */}
+        <div style={{height:6, backgroundColor:'#f0ede9'}}/>
+        {/* M Room */}
+        <RoomGrid roomId="studio2" roomLabel="🎥 M Room" roomColor="#1d4ed8"/>
       </div>
     </div>
   );
 }
 
 // ─── Month Grid ───────────────────────────────────────────────
-function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover }) {
+function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover, fBrands, selectMode, selected, toggleSelect }) {
   const days = getDaysInMonth(year, month);
   const today = ds(new Date());
   const sById = Object.fromEntries(data.streamers.map(s=>[s.id,s]));
   const bById = Object.fromEntries(data.brands.map(b=>[b.id,b]));
   const dateStrs = days.map(d => ds(d));
-  const cellMap = buildCellMap(data.slots, dateStrs);
+  const cellMap = buildCellMap(data.slots, dateStrs,
+    fBrands?.size > 0 ? s => fBrands.has(s.brandId) : null
+  );
 
   const onEmptyWithEnd = useCallback((date, startTime, endTime) => onEmpty(date, startTime, endTime), [onEmpty]);
   const { cellDown, cellEnter, isSelected, dragging } = useDrag(onEmptyWithEnd);
@@ -286,15 +494,15 @@ function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover })
   return (
     <div className="overflow-auto flex-1" style={{cursor: dragging?'ns-resize':'default'}}>
       <table className="text-[10px] border-collapse select-none" style={{minWidth:`${days.length*72+52}px`}}>
-        <thead className="sticky top-0 z-20 bg-white shadow-sm">
+        <thead className="sticky top-0 z-20 bg-white" style={{boxShadow:'0 1px 0 #e2dcd5, 0 2px 8px rgba(0,0,0,0.04)'}}>
           <tr>
-            <th className="sticky left-0 z-30 bg-white w-12 border-b border-r border-border text-gray-400 font-normal px-1 py-1.5 text-right">เวลา</th>
+            <th className="sticky left-0 z-30 bg-white w-12 border-r border-border text-[9px] text-gray-300 font-medium px-1 py-2 text-right">เวลา</th>
             {days.map(d=>{
               const dstr=ds(d), isT=dstr===today;
               return (
-                <th key={dstr} style={{minWidth:72}} className={`border-b border-r border-border px-0.5 py-1 text-center ${isT?'bg-orange-50':''}`}>
-                  <div className={`text-[9px] ${isT?'text-accent font-bold':'text-gray-400'}`}>{DAY_TH[d.getDay()]}</div>
-                  <div className={`text-sm font-bold leading-none ${isT?'text-accent':'text-gray-700'}`}>{d.getDate()}</div>
+                <th key={dstr} style={{minWidth:72}} className={`border-r border-border px-1 py-2 text-center ${isT?'bg-orange-50':''}`}>
+                  <div className={`text-[9px] mb-1 ${isT?'text-accent font-semibold':'text-gray-400'}`}>{DAY_TH[d.getDay()]}</div>
+                  <div className={`inline-flex items-center justify-center w-6 h-6 text-xs font-bold rounded-full leading-none ${isT?'bg-accent text-white':'text-gray-700'}`}>{d.getDate()}</div>
                 </th>
               );
             })}
@@ -303,7 +511,7 @@ function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover })
         <tbody>
           {HOURS.map((hour, hIdx)=>(
             <tr key={hour} style={{height:36}}>
-              <td className="sticky left-0 z-10 bg-white px-1 text-gray-400 text-right border-r border-b border-border w-12">{hour}</td>
+              <td className="sticky left-0 z-10 bg-white px-2 text-[9px] font-medium text-gray-300 text-right border-r border-b border-border w-12 align-top pt-[3px]">{hour}</td>
               {days.map(d=>{
                 const dstr=ds(d), isT=dstr===today;
                 const key=`${dstr}_${hIdx}`;
@@ -312,17 +520,17 @@ function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover })
                 const selected=isSelected(dstr,hIdx);
                 return (
                   <td key={dstr}
-                    className={`border-r border-b border-border p-0 relative transition-colors
-                      ${selected?'bg-accent/20':isT&&!hasSlot?'bg-orange-50/60':!hasSlot?'hover:bg-gray-50':''}`}
-                    style={{minWidth:72, height:36}}
+                    className={`border-r p-0 relative transition-colors
+                      ${selected?'bg-accent/15':isT&&!hasSlot?'bg-orange-50/40':!hasSlot?'hover:bg-gray-50/70':''}`}
+                    style={{minWidth:72, height:36, borderBottom:`1px solid ${hIdx%2===1?'#e2dcd5':'#ece7e1'}`}}
                     onMouseDown={()=>cellDown(dstr,hIdx,hasSlot)}
                     onMouseEnter={e=>{cellEnter(dstr,hIdx);onHover({x:e.clientX,y:e.clientY,date:dstr,hour});}}
                     onMouseLeave={()=>onHover(null)}>
                     {hasSlot && (
-                      <div className="flex flex-row h-full w-full" style={{gap:1}}>
+                      <div className="flex flex-row h-full w-full" style={{gap:1, padding:'1px 1px 0'}}>
                         {entries.map(({slot:s,pos})=>(
                           <div key={s.id} className="flex-1 min-w-0 h-full">
-                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot} onHover={onHover}/>
+                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot} onHover={onHover} selectMode={selectMode} selected={selected} toggleSelect={toggleSelect}/>
                           </div>
                         ))}
                       </div>
@@ -339,14 +547,14 @@ function MonthGrid({ year, month, data, conflictSet, onSlot, onEmpty, onHover })
 }
 
 // ─── Week Grid ────────────────────────────────────────────────
-function WeekGrid({ week, data, conflictSet, fStreamer, fBrand, onSlot, onEmpty, onHover }) {
+function WeekGrid({ week, data, conflictSet, fStreamer, fBrands, onSlot, onEmpty, onHover, selectMode, selected, toggleSelect }) {
   const today = ds(new Date());
   const sById = Object.fromEntries(data.streamers.map(s=>[s.id,s]));
   const bById = Object.fromEntries(data.brands.map(b=>[b.id,b]));
   const dateStrs = week.map(d => ds(d));
   const cellMap = buildCellMap(data.slots, dateStrs, s => {
     if (fStreamer !== 'all' && s.streamerId !== fStreamer) return false;
-    if (fBrand !== 'all' && s.brandId !== fBrand) return false;
+    if (fBrands?.size > 0 && !fBrands.has(s.brandId)) return false;
     return true;
   });
 
@@ -356,15 +564,15 @@ function WeekGrid({ week, data, conflictSet, fStreamer, fBrand, onSlot, onEmpty,
   return (
     <div className="flex-1 overflow-auto" style={{cursor: dragging?'ns-resize':'default'}}>
       <table className="text-xs border-collapse w-full select-none" style={{minWidth:`${week.length*140+56}px`}}>
-        <thead className="sticky top-0 z-10 bg-white shadow-sm">
+        <thead className="sticky top-0 z-10 bg-white" style={{boxShadow:'0 1px 0 #e2dcd5, 0 2px 8px rgba(0,0,0,0.04)'}}>
           <tr>
-            <th className="sticky left-0 z-20 bg-white w-14 px-2 py-2 text-gray-400 font-normal text-right border-b border-r border-border">เวลา</th>
+            <th className="sticky left-0 z-20 bg-white w-14 px-2 py-2.5 text-[9px] font-medium text-gray-300 text-right border-r border-border">เวลา</th>
             {week.map(d=>{
               const dstr=ds(d), isT=dstr===today;
               return (
-                <th key={dstr} className={`px-2 py-2 border-b border-r border-border font-medium min-w-[140px] text-center ${isT?'bg-orange-50':''}`}>
-                  <div className={`text-[10px] ${isT?'text-accent':'text-gray-400'}`}>{DAY_TH[d.getDay()]}</div>
-                  <div className={`text-base font-bold ${isT?'text-accent':'text-gray-700'}`}>{d.getDate()}</div>
+                <th key={dstr} className={`px-2 py-2.5 border-r border-border font-medium min-w-[140px] text-center ${isT?'bg-orange-50':''}`}>
+                  <div className={`text-[10px] mb-1 ${isT?'text-accent font-semibold':'text-gray-400'}`}>{DAY_TH[d.getDay()]}</div>
+                  <div className={`inline-flex items-center justify-center w-7 h-7 text-sm font-bold rounded-full ${isT?'bg-accent text-white':'text-gray-700'}`}>{d.getDate()}</div>
                 </th>
               );
             })}
@@ -373,7 +581,8 @@ function WeekGrid({ week, data, conflictSet, fStreamer, fBrand, onSlot, onEmpty,
         <tbody>
           {HOURS.map((hour, hIdx)=>(
             <tr key={hour} style={{height:40}}>
-              <td className="sticky left-0 z-10 bg-white px-2 text-gray-400 text-right border-r border-b border-border w-14">{hour}</td>
+              <td className="sticky left-0 z-10 bg-white px-2 text-[9px] font-medium text-gray-300 text-right border-r border-border w-14 align-top pt-1"
+                style={{borderBottom:`1px solid ${hIdx%2===1?'#e2dcd5':'#ece7e1'}`}}>{hour}</td>
               {week.map(d=>{
                 const dstr=ds(d);
                 const key=`${dstr}_${hIdx}`;
@@ -382,17 +591,17 @@ function WeekGrid({ week, data, conflictSet, fStreamer, fBrand, onSlot, onEmpty,
                 const selected=isSelected(dstr,hIdx);
                 return (
                   <td key={dstr}
-                    className={`border-r border-b border-border p-0 relative transition-colors
-                      ${selected?'bg-accent/20':!hasSlot?'hover:bg-gray-50':''}`}
-                    style={{height:40}}
+                    className={`border-r p-0 relative transition-colors
+                      ${selected?'bg-accent/15':!hasSlot?'hover:bg-gray-50/70':''}`}
+                    style={{height:40, borderBottom:`1px solid ${hIdx%2===1?'#e2dcd5':'#ece7e1'}`}}
                     onMouseDown={()=>cellDown(dstr,hIdx,hasSlot)}
                     onMouseEnter={e=>{cellEnter(dstr,hIdx);onHover({x:e.clientX,y:e.clientY,date:dstr,hour});}}
                     onMouseLeave={()=>onHover(null)}>
                     {hasSlot && (
-                      <div className="flex flex-row h-full w-full" style={{gap:1}}>
+                      <div className="flex flex-row h-full w-full" style={{gap:1, padding:'1px 1px 0'}}>
                         {entries.map(({slot:s,pos})=>(
                           <div key={s.id} className="flex-1 min-w-0 h-full">
-                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot} onHover={onHover}/>
+                            <CellBlock slot={s} pos={pos} sById={sById} bById={bById} conflictSet={conflictSet} onSlot={onSlot} onHover={onHover} selectMode={selectMode} selected={selected} toggleSelect={toggleSelect}/>
                           </div>
                         ))}
                       </div>
@@ -517,13 +726,28 @@ export default function ScheduleBoard() {
   useEffect(()=>{ window.location.hash = view; },[view]);
   const [data, setData]   = useState({streamers:[],brands:[],slots:[],conflicts:[],fifiHours:null,agencies:[]});
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving]   = useState(false); // mutation in progress
   const [modal, setModal] = useState(null);
   const [form, setForm]   = useState({});
   const [quickSlot, setQuickSlot] = useState(null); // quick-edit panel
   const [autoLinkOpen, setAutoLinkOpen] = useState(false);
   const [autoLinkMap, setAutoLinkMap] = useState({});
   const [fS, setFS] = useState('all');
-  const [fB, setFB] = useState('all');
+  const [fBrands, setFBrands] = useState(new Set()); // empty = show all
+  const toggleBrand = (id) => setFBrands(prev => {
+    const n = new Set(prev);
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
+
+  // ── multi-select ───────────────────────────────────────────
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected]     = useState(new Set()); // slot ids
+  const toggleSelect = (id) => setSelected(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); };
+  const [bulkModal, setBulkModal] = useState(null); // 'status'|'streamer'|'delete'
   const [toast, setToast] = useState(null);
 
   // import
@@ -543,16 +767,37 @@ export default function ScheduleBoard() {
   const [exportModal, setExportModal] = useState(null); // { brand, slots, tsv }
   const [copied, setCopied] = useState(false);
 
-  const load = useCallback(async()=>{
-    setLoading(true);
-    try { const r=await API_get(`/data?year=${year}&month=${month}`); setData(r.data); }
-    catch(e){ toast_show('โหลดไม่ได้ '+e.message,'err'); }
+  // ── localStorage cache key ──────────────────────────────────
+  const cacheKey = `peepz_data_${year}_${month}`;
+
+  const load = useCallback(async(silent=false)=>{
+    // instant display from cache
+    if(!silent){
+      try{
+        const cached = localStorage.getItem(cacheKey);
+        if(cached){ setData(JSON.parse(cached)); }
+        else { setLoading(true); }
+      }catch{ setLoading(true); }
+    }
+    try {
+      const r = await API_get(`/data?year=${year}&month=${month}`);
+      setData(r.data);
+      try{ localStorage.setItem(cacheKey, JSON.stringify(r.data)); }catch{}
+    }
+    catch(e){ if(!silent) toast_show('โหลดไม่ได้ '+e.message,'err'); }
     finally { setLoading(false); }
-  },[year,month]);
+  },[year,month,cacheKey]);
+
+  // helper: wrap any mutation with saving state + silent reload
+  const withSaving = useCallback(async(fn)=>{
+    setSaving(true);
+    try { await fn(); }
+    finally { setSaving(false); }
+  },[]);
 
   useEffect(()=>{load();},[load]);
 
-  function toast_show(msg,type='ok'){setToast({msg,type});setTimeout(()=>setToast(null),4000);}
+  function toast_show(msg,type='ok'){setToast({msg,type});setTimeout(()=>setToast(null),3500);}
 
   // week nav
   const allDays=getDaysInMonth(year,month);
@@ -571,51 +816,122 @@ export default function ScheduleBoard() {
   // ── slot CRUD ──────────────────────────────────────────────
   async function saveSlot(){
     if(!form.brandId||!form.date||!form.startTime||!form.endTime) return toast_show('กรอกข้อมูลให้ครบ','err');
-    try{
-      if(modal?.slot){ await API_put(`/slots/${modal.slot.id}`, form); toast_show('แก้ไขแล้ว'); }
-      else {
-        const r=await API_post('/slots', form);
-        toast_show(r.data.autoSplit?`แบ่งเป็น ${r.data.slots.length} sessions อัตโนมัติ`:'เพิ่ม slot แล้ว');
-      }
-      setModal(null); load();
-    }catch(e){toast_show(e.response?.data?.error||e.message,'err');}
+    await withSaving(async()=>{
+      try{
+        if(modal?.slot){ await API_put(`/slots/${modal.slot.id}`, form); toast_show('✓ แก้ไขแล้ว'); }
+        else {
+          await API_post('/slots', form);
+          toast_show('✓ เพิ่ม slot แล้ว');
+        }
+        setModal(null); load(true);
+      }catch(e){toast_show(e.response?.data?.error||e.message,'err');}
+    });
   }
-  async function deleteSlot(id){if(!confirm('ลบ slot?'))return;await API_del(`/slots/${id}`);toast_show('ลบแล้ว');setModal(null);load();}
+  async function deleteSlot(id){
+    if(!confirm('ลบ slot?'))return;
+    await withSaving(async()=>{await API_del(`/slots/${id}`);toast_show('✓ ลบแล้ว');setModal(null);load(true);});
+  }
 
   // ── streamer CRUD ──────────────────────────────────────────
   async function saveStreamer(){
     if(!form.name) return toast_show('ใส่ชื่อ','err');
-    if(modal?.item){ await API_put(`/streamers/${modal.item.id}`, form); toast_show('แก้ไขนักไลฟ์แล้ว'); }
-    else { await API_post('/streamers', form); toast_show('เพิ่มนักไลฟ์แล้ว'); }
-    setModal(null); load();
+    await withSaving(async()=>{
+      if(modal?.item){ await API_put(`/streamers/${modal.item.id}`, form); toast_show('✓ แก้ไขนักไลฟ์แล้ว'); }
+      else { await API_post('/streamers', form); toast_show('✓ เพิ่มนักไลฟ์แล้ว'); }
+      setModal(null); load(true);
+    });
   }
   async function deleteStreamer(id){
-    if(!confirm('ลบนักไลฟ์คนนี้?')) return;
-    await API_del(`/streamers/${id}`); toast_show('ลบแล้ว'); setModal(null); load();
+    const streamer = data.streamers.find(s=>s.id===id);
+    const slotCount = data.slots.filter(s=>s.streamerId===id).length;
+    const msg = slotCount > 0
+      ? `ลบนักไลฟ์ "${streamer?.name}" และ slot ที่จองไว้ ${slotCount} รายการด้วยไหม?`
+      : `ลบนักไลฟ์ "${streamer?.name}"?`;
+    if(!confirm(msg)) return;
+    await withSaving(async()=>{
+      const r = await API_del(`/streamers/${id}`);
+      toast_show(`✓ ลบแล้ว${r.data.slotsRemoved>0?` (ลบ ${r.data.slotsRemoved} slots ด้วย)`:''}`);
+      setModal(null); load(true);
+    });
+  }
+
+  // ── availability CRUD ─────────────────────────────────────
+  const [availForm, setAvailForm] = useState({}); // { streamerId, days:[], startTime, endTime }
+  const [availEditId, setAvailEditId] = useState(null);
+
+  async function saveAvail() {
+    if (!availForm.streamerId || !availForm.days?.length || !availForm.startTime || !availForm.endTime)
+      return toast_show('กรอกข้อมูลให้ครบ', 'err');
+    await withSaving(async()=>{
+      const payload = { ...availForm, type: 'weekly' };
+      if (availEditId) { await API_put(`/availability/${availEditId}`, payload); toast_show('✓ แก้ไขตารางว่างแล้ว'); }
+      else { await API_post('/availability', payload); toast_show('✓ บันทึกตารางว่างแล้ว'); }
+      setAvailForm({}); setAvailEditId(null); load(true);
+    });
+  }
+  async function deleteAvail(id) {
+    await withSaving(async()=>{await API_del(`/availability/${id}`); toast_show('✓ ลบแล้ว'); load(true);});
   }
 
   // ── brand CRUD ────────────────────────────────────────────
   async function saveBrand(){
     if(!form.name) return toast_show('ใส่ชื่อแบรนด์','err');
-    if(modal?.item){ await API_put(`/brands/${modal.item.id}`, form); toast_show('แก้ไขแบรนด์แล้ว'); }
-    else { await API_post('/brands', form); toast_show('เพิ่มแบรนด์แล้ว'); }
-    setModal(null); load();
+    await withSaving(async()=>{
+      if(modal?.item){ await API_put(`/brands/${modal.item.id}`, form); toast_show('✓ แก้ไขแบรนด์แล้ว'); }
+      else { await API_post('/brands', form); toast_show('✓ เพิ่มแบรนด์แล้ว'); }
+      setModal(null); load(true);
+    });
   }
   async function deleteBrand(id){
-    if(!confirm('ลบแบรนด์นี้?')) return;
-    await API_del(`/brands/${id}`); toast_show('ลบแล้ว'); setModal(null); load();
+    const brand = data.brands.find(b=>b.id===id);
+    const slotCount = data.slots.filter(s=>s.brandId===id).length;
+    const msg = slotCount > 0
+      ? `ลบแบรนด์ "${brand?.name}" และ slot ทั้งหมด ${slotCount} รายการด้วยไหม?`
+      : `ลบแบรนด์ "${brand?.name}"?`;
+    if(!confirm(msg)) return;
+    await withSaving(async()=>{
+      const r = await API_del(`/brands/${id}`);
+      toast_show(`✓ ลบแล้ว${r.data.slotsRemoved>0?` (ลบ ${r.data.slotsRemoved} slots ด้วย)`:''}`);
+      setModal(null); load(true);
+    });
   }
 
   // ── agency CRUD ───────────────────────────────────────────
   async function saveAgency(){
     if(!form.name) return toast_show('ใส่ชื่อ Agency','err');
-    if(modal?.item){ await API_put(`/agencies/${modal.item.id}`, form); toast_show('แก้ไข Agency แล้ว'); }
-    else { await API_post('/agencies', form); toast_show('เพิ่ม Agency แล้ว'); }
-    setModal({type:'manage'}); load();
+    await withSaving(async()=>{
+      if(modal?.item){ await API_put(`/agencies/${modal.item.id}`, form); toast_show('✓ แก้ไข Agency แล้ว'); }
+      else { await API_post('/agencies', form); toast_show('✓ เพิ่ม Agency แล้ว'); }
+      setModal({type:'manage'}); load(true);
+    });
   }
   async function deleteAgency(id){
     if(!confirm('ลบ Agency นี้?')) return;
-    await API_del(`/agencies/${id}`); toast_show('ลบแล้ว'); setModal({type:'manage'}); load();
+    await withSaving(async()=>{await API_del(`/agencies/${id}`); toast_show('✓ ลบแล้ว'); setModal({type:'manage'}); load(true);});
+  }
+
+  // ── bulk actions on selected slots ───────────────────────
+  async function bulkSetStatus(status) {
+    await withSaving(async()=>{
+      await Promise.all([...selected].map(id => API_put(`/slots/${id}`, {status})));
+      toast_show(`✓ เปลี่ยนสถานะ ${selected.size} slot แล้ว`);
+      exitSelect(); setBulkModal(null); load(true);
+    });
+  }
+  async function bulkSetStreamer(streamerId) {
+    await withSaving(async()=>{
+      await Promise.all([...selected].map(id => API_put(`/slots/${id}`, {streamerId: streamerId||null, streamerName:''})));
+      toast_show(`✓ เปลี่ยนนักไลฟ์ ${selected.size} slot แล้ว`);
+      exitSelect(); setBulkModal(null); load(true);
+    });
+  }
+  async function bulkDelete() {
+    if(!confirm(`ลบ ${selected.size} slot ที่เลือกทั้งหมด?`)) return;
+    await withSaving(async()=>{
+      await Promise.all([...selected].map(id => API_del(`/slots/${id}`)));
+      toast_show(`✓ ลบ ${selected.size} slot แล้ว`);
+      exitSelect(); load(true);
+    });
   }
 
   // ── bulk add ──────────────────────────────────────────────
@@ -624,9 +940,11 @@ export default function ScheduleBoard() {
     if(!bulkBrand) return toast_show('เลือกแบรนด์','err');
     const valid=bulkRows.filter(r=>r.date&&r.startTime&&r.endTime);
     if(!valid.length) return toast_show('ต้องมีอย่างน้อย 1 แถว','err');
-    let total=0;
-    for(const r of valid){try{const res=await API_post('/slots', {...r,brandId:bulkBrand,status:'pending'});total+=res.data.autoSplit?res.data.slots.length:1;}catch{}}
-    toast_show(`เพิ่ม ${total} slot แล้ว`);setModal(null);setBulkRows([EMPTY_ROW()]);load();
+    await withSaving(async()=>{
+      let total=0;
+      for(const r of valid){try{const res=await API_post('/slots', {...r,brandId:bulkBrand,status:'pending'});total+=res.data.autoSplit?res.data.slots.length:1;}catch{}}
+      toast_show(`✓ เพิ่ม ${total} slot แล้ว`);setModal(null);setBulkRows([EMPTY_ROW()]);load(true);
+    });
   }
 
   // ── parse pasted TSV from Google Sheets ──────────────────
@@ -778,7 +1096,7 @@ export default function ScheduleBoard() {
 
   // quick-edit panel for existing slots; full modal for new slots
   function openSlot(s){ setQuickSlot(s); }
-  function openEmpty(dstr, startTime, endTime=''){setForm({date:dstr,startTime,endTime,status:'pending'});setModal({type:'slot'});}
+  function openEmpty(dstr, startTime, endTime='', location=''){setForm({date:dstr,startTime,endTime,status:'pending',...(location?{location}:{})});setModal({type:'slot'});}
 
   async function quickSave(slotData) {
     try {
@@ -850,16 +1168,51 @@ export default function ScheduleBoard() {
 
         <div className="flex-1"/>
 
-        {view==='week'&&<>
-          <select value={fS} onChange={e=>setFS(e.target.value)} className="text-xs border border-border rounded-lg px-2 py-1.5 text-gray-600 bg-white">
+        {/* ── Brand filter chips (all views) ── */}
+        {data.brands.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={()=>setFBrands(new Set())}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
+                fBrands.size===0
+                  ? 'bg-gray-800 text-white border-gray-800'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+              }`}>
+              ทั้งหมด
+            </button>
+            {sortByName(data.brands).map(b=>(
+              <button key={b.id} onClick={()=>toggleBrand(b.id)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
+                  fBrands.has(b.id)
+                    ? 'text-white border-transparent shadow-sm'
+                    : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                }`}
+                style={fBrands.has(b.id)?{backgroundColor:b.color,borderColor:b.color}:{}}>
+                <span className="w-2 h-2 rounded-full flex-shrink-0"
+                  style={{backgroundColor: fBrands.has(b.id) ? 'rgba(255,255,255,0.7)' : b.color}}/>
+                {b.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Streamer filter (week only) ── */}
+        {view==='week'&&(
+          <select value={fS} onChange={e=>setFS(e.target.value)} className="text-xs border border-border rounded-lg px-2 py-1.5 text-gray-600 bg-white flex-shrink-0">
             <option value="all">นักไลฟ์ทุกคน</option>
             {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <select value={fB} onChange={e=>setFB(e.target.value)} className="text-xs border border-border rounded-lg px-2 py-1.5 text-gray-600 bg-white">
-            <option value="all">ทุกแบรนด์</option>
-            {sortByName(data.brands).map(b=><option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-        </>}
+        )}
+
+        {/* select mode toggle */}
+        <button onClick={()=>{ if(selectMode) exitSelect(); else setSelectMode(true); }}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+            selectMode
+              ? 'bg-accent text-white border-accent shadow-sm'
+              : 'bg-white text-gray-600 border-border hover:border-accent hover:text-accent'
+          }`}>
+          {selectMode ? `☑ เลือกอยู่ (${selected.size})` : '☐ เลือก'}
+        </button>
 
         <Btn onClick={()=>{setForm({status:'pending'});setModal({type:'slot'});}} primary>+ Slot</Btn>
         <Btn onClick={()=>{setBulkBrand('');setBulkRows([EMPTY_ROW()]);setModal({type:'bulk'});}}>+ หลาย Slot</Btn>
@@ -902,30 +1255,66 @@ export default function ScheduleBoard() {
 
           {/* Brand status */}
           <div>
-            <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-1.5">สถานะแบรนด์ — {MONTH_TH[month]}</div>
+            <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">สถานะแบรนด์ — {MONTH_TH[month]}</div>
             {data.brands.map(b => {
               const done = brandDone(b.id);
-              const slotCount = data.slots.filter(s => {
+              const brandSlots = data.slots.filter(s => {
                 if (s.brandId !== b.id) return false;
                 const d = new Date(s.date);
                 return d.getFullYear()===year && d.getMonth()+1===month;
-              }).length;
+              });
+              const counts = { pending: brandSlots.filter(s=>s.status==='pending'||!s.status).length, confirmed: brandSlots.filter(s=>s.status==='confirmed').length, approved: brandSlots.filter(s=>s.status==='approved').length };
+              const isFiltered = fBrands.has(b.id);
               return (
-                <div key={b.id} className={`flex items-center gap-1.5 mb-1 px-2 py-1.5 rounded-lg border transition-all ${done?'bg-green-50 border-green-200':'border-border bg-white'}`}>
-                  <div className="w-2 h-2 rounded-full flex-shrink-0" style={{backgroundColor:b.color}}/>
-                  <span className="text-[11px] text-gray-700 flex-1 truncate">{b.name}</span>
-                  <span className="text-[10px] text-gray-400">{slotCount} slot</span>
-                  <button onClick={()=>toggleBrandDone(b.id)} title={done?'ยกเลิกเสร็จ':'ทำเครื่องหมายเสร็จแล้ว'}
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] flex-shrink-0 transition-all ${done?'bg-green-500 text-white':'border-2 border-gray-300 hover:border-green-400'}`}>
-                    {done?'✓':''}
-                  </button>
-                  {slotCount>0&&<button onClick={()=>openExport(b)} title="Export ออก Sheets"
-                    className="text-[10px] text-gray-400 hover:text-accent px-0.5">↗</button>}
+                <div key={b.id} className={`mb-1.5 rounded-xl border transition-all overflow-hidden ${done?'border-green-200':'border-border'} ${isFiltered?'ring-2 ring-accent/40':''}`}
+                  style={{backgroundColor: isFiltered ? b.color+'0d' : done ? '#f0fdf4' : 'white'}}>
+                  {/* top row */}
+                  <div className="flex items-center gap-1.5 px-2.5 py-2">
+                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{backgroundColor:b.color}}/>
+                    {/* click name → filter */}
+                    <button onClick={()=>{ if(isFiltered){ setFBrands(new Set()); } else { setFBrands(new Set([b.id])); }}}
+                      className="text-[11px] font-semibold text-gray-700 flex-1 truncate text-left hover:opacity-70 transition-opacity">
+                      {b.name}
+                    </button>
+                    <span className="text-[10px] text-gray-400 flex-shrink-0">{brandSlots.length}</span>
+                    {/* done toggle */}
+                    <button onClick={()=>toggleBrandDone(b.id)} title={done?'ยกเลิกเสร็จ':'ทำเครื่องหมายเสร็จ'}
+                      className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] flex-shrink-0 transition-all ${done?'bg-green-500 text-white':'border-2 border-gray-200 hover:border-green-400'}`}>
+                      {done&&'✓'}
+                    </button>
+                  </div>
+                  {/* status pills row */}
+                  {brandSlots.length>0&&(
+                    <div className="flex gap-1 px-2.5 pb-2">
+                      {counts.pending>0&&(
+                        <button onClick={async()=>{ if(!confirm(`เปลี่ยน ${counts.pending} slot รอยืนยัน → ยืนยันแล้ว?`))return; await withSaving(async()=>{ await Promise.all(brandSlots.filter(s=>s.status==='pending'||!s.status).map(s=>API_put(`/slots/${s.id}`,{status:'confirmed'}))); toast_show('✓ เปลี่ยนสถานะแล้ว'); load(true); }); }}
+                          className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-100 transition-colors font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"/>{counts.pending} รอ
+                        </button>
+                      )}
+                      {counts.confirmed>0&&(
+                        <button onClick={async()=>{ if(!confirm(`เปลี่ยน ${counts.confirmed} slot → อนุมัติ?`))return; await withSaving(async()=>{ await Promise.all(brandSlots.filter(s=>s.status==='confirmed').map(s=>API_put(`/slots/${s.id}`,{status:'approved'}))); toast_show('✓ เปลี่ยนสถานะแล้ว'); load(true); }); }}
+                          className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-200 hover:bg-green-100 transition-colors font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block"/>{counts.confirmed} ยืนยัน
+                        </button>
+                      )}
+                      {counts.approved>0&&(
+                        <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200 font-medium">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block"/>{counts.approved} อนุมัติ
+                        </span>
+                      )}
+                      {/* select all this brand */}
+                      <button onClick={()=>{ setSelectMode(true); setSelected(new Set(brandSlots.map(s=>s.id))); }}
+                        title="เลือก slot ทั้งหมดของแบรนด์นี้"
+                        className="ml-auto text-[10px] text-gray-400 hover:text-accent px-1 transition-colors">☐</button>
+                      {brandSlots.length>0&&<button onClick={()=>openExport(b)} title="Export" className="text-[10px] text-gray-400 hover:text-accent transition-colors">↗</button>}
+                    </div>
+                  )}
                 </div>
               );
             })}
             {data.brands.filter(b=>brandDone(b.id)).length===data.brands.length&&data.brands.length>0&&(
-              <div className="mt-1.5 text-center text-[11px] text-green-600 font-semibold">🎉 จัดครบทุกแบรนด์แล้ว!</div>
+              <div className="mt-1 text-center text-[11px] text-green-600 font-semibold">🎉 จัดครบทุกแบรนด์แล้ว!</div>
             )}
           </div>
 
@@ -964,29 +1353,80 @@ export default function ScheduleBoard() {
             </div>
           )}
 
-          {/* Legend */}
+          {/* Streamers */}
           <div>
-            <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-1.5">นักไลฟ์</div>
-            {data.streamers.map(s=>(
-              <div key={s.id} className="flex items-center gap-2 mb-1">
-                <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{backgroundColor:s.color}}/>
-                <span className="text-[11px] text-gray-700 truncate flex-1">{s.name}</span>
-                <span className="text-[9px] text-gray-400">{s.type==='employee'?'ประจำ':s.type==='freelance-office'?'FL/ออฟ':s.type==='freelance-agency'?'Agency':'FL'}</span>
-              </div>
-            ))}
+            <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">นักไลฟ์</div>
+            {data.streamers.map(s=>{
+              const sSlots = data.slots.filter(sl => {
+                if (sl.streamerId !== s.id) return false;
+                const d = new Date(sl.date);
+                return d.getFullYear()===year && d.getMonth()+1===month;
+              });
+              const isFiltered = fS === s.id;
+              const typeLabel = s.type==='employee'?'ประจำ':s.type==='freelance-office'?'FL/ออฟ':s.type==='freelance-agency'?'Agency':'FL';
+              return (
+                <div key={s.id}
+                  className={`mb-1.5 rounded-xl border transition-all overflow-hidden ${isFiltered?'ring-2 ring-accent/40 border-transparent':'border-border'}`}
+                  style={{backgroundColor: isFiltered ? s.color+'14' : 'white'}}>
+                  <div className="flex items-center gap-1.5 px-2.5 py-2">
+                    <div className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{backgroundColor:s.color}}/>
+                    {/* click name → filter week view by this streamer */}
+                    <button onClick={()=>{ setFS(isFiltered ? 'all' : s.id); if(view!=='week') {} }}
+                      className="text-[11px] font-semibold text-gray-700 flex-1 truncate text-left hover:opacity-70 transition-opacity">
+                      {s.name}
+                    </button>
+                    <span className="text-[10px] text-gray-400 flex-shrink-0 font-mono">{sSlots.length}</span>
+                    {/* select all slots of this streamer */}
+                    {sSlots.length>0&&(
+                      <button onClick={()=>{ setSelectMode(true); setSelected(new Set(sSlots.map(sl=>sl.id))); }}
+                        title="เลือก slot ทั้งหมดของนักไลฟ์นี้"
+                        className="text-[10px] text-gray-400 hover:text-accent transition-colors">☐</button>
+                    )}
+                  </div>
+                  {sSlots.length>0&&(()=>{
+                    const sc = { pending: sSlots.filter(sl=>sl.status==='pending'||!sl.status).length, confirmed: sSlots.filter(sl=>sl.status==='confirmed').length, approved: sSlots.filter(sl=>sl.status==='approved').length };
+                    return (
+                      <div className="flex gap-1 px-2.5 pb-2 flex-wrap">
+                        <span className="text-[9px] text-gray-400 font-medium">{typeLabel}</span>
+                        <span className="flex-1"/>
+                        {sc.pending>0&&<span className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-100"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"/>{sc.pending}</span>}
+                        {sc.confirmed>0&&<span className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded-full bg-green-50 text-green-600 border border-green-100"><span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block"/>{sc.confirmed}</span>}
+                        {sc.approved>0&&<span className="flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100"><span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block"/>{sc.approved}</span>}
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* ── Calendar ── */}
-        {loading?(
-          <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">กำลังโหลด...</div>
-        ):view==='month'?(
-          <MonthGrid year={year} month={month} data={data} conflictSet={conflictSet} onSlot={openSlot} onEmpty={openEmpty} onHover={setHoverInfo}/>
-        ):view==='studio'?(
-          <StudioView year={year} month={month} data={data} onSlot={openSlot}/>
-        ):(
-          <WeekGrid week={curWeek} data={data} conflictSet={conflictSet} fStreamer={fS} fBrand={fB} onSlot={openSlot} onEmpty={openEmpty} onHover={setHoverInfo}/>
-        )}
+        <div className="flex-1 min-w-0 relative flex flex-col">
+          {/* first-load spinner (no cache yet) */}
+          {loading&&!data.slots.length&&(
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-400 text-sm bg-bg z-10 pointer-events-none">
+              <svg className="animate-spin w-8 h-8 text-accent/60" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"/>
+                <path className="opacity-80" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+              </svg>
+              <span>กำลังโหลดข้อมูล...</span>
+            </div>
+          )}
+          {/* background refresh shimmer */}
+          {loading&&data.slots.length>0&&(
+            <div className="absolute top-0 left-0 right-0 h-0.5 z-20 overflow-hidden pointer-events-none">
+              <div className="h-full bg-accent/60" style={{animation:'loadbar 1.2s ease-in-out infinite'}}/>
+            </div>
+          )}
+          {view==='month'?(
+            <MonthGrid year={year} month={month} data={data} conflictSet={conflictSet} fBrands={fBrands} onSlot={openSlot} onEmpty={openEmpty} onHover={setHoverInfo} selectMode={selectMode} selected={selected} toggleSelect={toggleSelect}/>
+          ):view==='studio'?(
+            <StudioView year={year} month={month} data={data} onSlot={openSlot} onEmpty={openEmpty}/>
+          ):(
+            <WeekGrid week={curWeek} data={data} conflictSet={conflictSet} fStreamer={fS} fBrands={fBrands} onSlot={openSlot} onEmpty={openEmpty} onHover={setHoverInfo} selectMode={selectMode} selected={selected} toggleSelect={toggleSelect}/>
+          )}
+        </div>
       </div>
 
       {/* ── Modal: Add/Edit Slot ── */}
@@ -1045,75 +1485,230 @@ export default function ScheduleBoard() {
               <input type="text" value={form.notes||''} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} className="input w-full"/>
             </Field>
           </div>
-          {form.startTime&&form.endTime&&(()=>{const dur=(timeToMinutes(form.endTime)-timeToMinutes(form.startTime))/60;if(dur>3)return <p className="mt-2 text-amber-500 text-xs">⚠ {dur} ชม. — จะแบ่ง session อัตโนมัติ</p>;})()}
+          {/* ── Streamer suggestions ── */}
+          {form.date&&form.startTime&&form.endTime&&(()=>{
+            const suggestions = getAvailableStreamers(data, form.date, form.startTime, form.endTime, modal.slot?.id);
+            if(!suggestions.length) return null;
+            const statusIcon = {free:'🟢',busy:'🔴',off:'⚫',unknown:'❔'};
+            const statusLabel = {free:'ว่าง',busy:'ติดงาน',off:'ไม่ว่าง',unknown:'ไม่มีข้อมูล'};
+            return (
+              <div className="mt-3 p-3 bg-gray-50 rounded-xl border border-border">
+                <p className="text-xs font-semibold text-gray-500 mb-2">นักไลฟ์ที่ว่าง</p>
+                <div className="flex flex-wrap gap-2">
+                  {suggestions.map(s=>(
+                    <button key={s.id} type="button"
+                      onClick={()=>s.avail==='free'&&setForm(f=>({...f,streamerId:s.id}))}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                        form.streamerId===s.id
+                          ? 'bg-accent text-white border-accent shadow'
+                          : s.avail==='free'
+                            ? 'bg-white border-green-300 text-green-700 hover:border-green-500 hover:bg-green-50 cursor-pointer'
+                            : s.avail==='busy'
+                              ? 'bg-white border-red-200 text-red-400 cursor-not-allowed opacity-70'
+                              : 'bg-white border-gray-200 text-gray-400 cursor-default opacity-60'
+                      }`}>
+                      <span>{statusIcon[s.avail]}</span>
+                      <span style={{color:form.streamerId===s.id?'white':s.color||'inherit'}}>{s.name}</span>
+                      {form.streamerId!==s.id&&<span className="opacity-60 text-[10px]">{statusLabel[s.avail]}</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           <div className="flex gap-2 mt-5 justify-end">
             {modal.slot&&<button onClick={()=>deleteSlot(modal.slot.id)} className="mr-auto text-xs text-red-400 hover:text-red-600 px-2">ลบ slot</button>}
             <button onClick={()=>setModal(null)} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
-            <button onClick={saveSlot} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">บันทึก</button>
+            <button onClick={saveSlot} disabled={saving} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
+              {saving&&<svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>}
+              {saving?'กำลังบันทึก...':'บันทึก'}
+            </button>
           </div>
         </Modal>
       )}
 
       {/* ── Modal: Manage brands & streamers ── */}
       {modal?.type==='manage'&&(
-        <Modal title="จัดการแบรนด์ / นักไลฟ์ / Agency" onClose={()=>setModal(null)} wide>
-          <div className="grid grid-cols-3 gap-5">
+        <Modal title="จัดการแบรนด์ / นักไลฟ์ / Agency" onClose={()=>setModal(null)} xl>
+          {/* ── Top row: แบรนด์ | นักไลฟ์ | เอเจนซี่ ── */}
+          <div className="grid grid-cols-3 gap-5 mb-5">
             {/* Brands */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-bold text-gray-700">แบรนด์</h3>
-                <button onClick={()=>{setForm({});setModal({type:'brand'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
+            <div className="bg-gray-50 rounded-2xl border border-border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-700">🏷 แบรนด์</h3>
+                <button onClick={()=>{setForm({});setModal({type:'brand'});}}
+                  className="text-xs bg-accent text-white px-3 py-1 rounded-full font-semibold hover:opacity-80 transition-opacity">+ เพิ่ม</button>
               </div>
-              <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+              <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
                 {sortByName(data.brands).map(b=>(
-                  <div key={b.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border hover:border-accent/30 bg-white transition-colors">
-                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:b.color}}/>
-                    <span className="text-sm text-gray-700 flex-1 truncate">{b.name}</span>
-                    <button onClick={()=>{setForm({...b});setModal({type:'brand',item:b});}} className="text-[11px] text-gray-400 hover:text-accent px-1">แก้ไข</button>
-                    <button onClick={()=>deleteBrand(b.id)} className="text-[11px] text-gray-400 hover:text-red-500 px-1">ลบ</button>
+                  <div key={b.id} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white border border-border hover:border-accent/40 hover:shadow-sm transition-all group">
+                    <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-sm" style={{backgroundColor:b.color}}/>
+                    <span className="text-sm text-gray-800 font-medium flex-1 min-w-0 truncate">{b.name}</span>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button onClick={()=>{setForm({...b});setModal({type:'brand',item:b});}}
+                        className="text-[11px] text-accent hover:text-accent/70 px-1.5 py-0.5 rounded hover:bg-accent/10">แก้ไข</button>
+                      <button onClick={()=>deleteBrand(b.id)}
+                        className="text-[11px] text-red-400 hover:text-red-600 px-1.5 py-0.5 rounded hover:bg-red-50">ลบ</button>
+                    </div>
                   </div>
                 ))}
+                {!data.brands.length&&<p className="text-xs text-gray-400 text-center py-4">ยังไม่มีแบรนด์</p>}
               </div>
             </div>
             {/* Streamers */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-bold text-gray-700">นักไลฟ์</h3>
-                <button onClick={()=>{const autoColor=pickUniqueColor(data.streamers.map(s=>s.color));setForm({color:autoColor});setModal({type:'streamer'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
+            <div className="bg-gray-50 rounded-2xl border border-border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-700">🎤 นักไลฟ์</h3>
+                <button onClick={()=>{const autoColor=pickUniqueColor(data.streamers.map(s=>s.color));setForm({color:autoColor});setModal({type:'streamer'});}}
+                  className="text-xs bg-accent text-white px-3 py-1 rounded-full font-semibold hover:opacity-80 transition-opacity">+ เพิ่ม</button>
               </div>
-              <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+              <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
                 {sortByName(data.streamers).map(s=>(
-                  <div key={s.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border hover:border-accent/30 bg-white transition-colors">
-                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:s.color}}/>
-                    <span className="text-sm text-gray-700 flex-1 truncate">{s.name}</span>
-                    <span className="text-[10px] text-gray-400">{s.type==='employee'?'ประจำ':s.type==='freelance-office'?'FL/ออฟ':s.type==='freelance-agency'?'Agency':'FL'}</span>
-                    <button onClick={()=>{setForm({...s});setModal({type:'streamer',item:s});}} className="text-[11px] text-gray-400 hover:text-accent px-1">แก้ไข</button>
-                    <button onClick={()=>deleteStreamer(s.id)} className="text-[11px] text-gray-400 hover:text-red-500 px-1">ลบ</button>
+                  <div key={s.id} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white border border-border hover:border-accent/40 hover:shadow-sm transition-all group">
+                    <div className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-sm" style={{backgroundColor:s.color}}/>
+                    <span className="text-sm text-gray-800 font-medium flex-1 min-w-0 truncate">{s.name}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 flex-shrink-0 whitespace-nowrap">
+                      {s.type==='employee'?'ประจำ':s.type==='freelance-office'?'FL/ออฟ':s.type==='freelance-agency'?'Agency':'FL'}
+                    </span>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button onClick={()=>{setForm({...s});setModal({type:'streamer',item:s});}}
+                        className="text-[11px] text-accent hover:text-accent/70 px-1.5 py-0.5 rounded hover:bg-accent/10">แก้ไข</button>
+                      <button onClick={()=>deleteStreamer(s.id)}
+                        className="text-[11px] text-red-400 hover:text-red-600 px-1.5 py-0.5 rounded hover:bg-red-50">ลบ</button>
+                    </div>
                   </div>
                 ))}
+                {!data.streamers.length&&<p className="text-xs text-gray-400 text-center py-4">ยังไม่มีนักไลฟ์</p>}
               </div>
             </div>
             {/* Agencies */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-bold text-gray-700">เอเจนซี่</h3>
-                <button onClick={()=>{setForm({});setModal({type:'agency'});}} className="text-xs text-accent font-semibold hover:opacity-70">+ เพิ่ม</button>
+            <div className="bg-gray-50 rounded-2xl border border-border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-gray-700">🏢 เอเจนซี่</h3>
+                <button onClick={()=>{setForm({});setModal({type:'agency'});}}
+                  className="text-xs bg-accent text-white px-3 py-1 rounded-full font-semibold hover:opacity-80 transition-opacity">+ เพิ่ม</button>
               </div>
-              <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+              <div className="flex flex-col gap-1.5 max-h-56 overflow-y-auto pr-1">
                 {sortByName(data.agencies||[]).map(a=>(
-                  <div key={a.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border hover:border-accent/30 bg-white transition-colors">
-                    <span className="text-sm text-gray-700 flex-1 truncate">{a.name}</span>
-                    {a.contactPerson&&<span className="text-[10px] text-gray-400 truncate">{a.contactPerson}</span>}
-                    <button onClick={()=>{setForm({...a});setModal({type:'agency',item:a});}} className="text-[11px] text-gray-400 hover:text-accent px-1">แก้ไข</button>
-                    <button onClick={()=>deleteAgency(a.id)} className="text-[11px] text-gray-400 hover:text-red-500 px-1">ลบ</button>
+                  <div key={a.id} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-white border border-border hover:border-accent/40 hover:shadow-sm transition-all group">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm text-gray-800 font-medium truncate block">{a.name}</span>
+                      {a.contactPerson&&<span className="text-[11px] text-gray-400 truncate block">{a.contactPerson}</span>}
+                    </div>
+                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button onClick={()=>{setForm({...a});setModal({type:'agency',item:a});}}
+                        className="text-[11px] text-accent hover:text-accent/70 px-1.5 py-0.5 rounded hover:bg-accent/10">แก้ไข</button>
+                      <button onClick={()=>deleteAgency(a.id)}
+                        className="text-[11px] text-red-400 hover:text-red-600 px-1.5 py-0.5 rounded hover:bg-red-50">ลบ</button>
+                    </div>
                   </div>
                 ))}
-                {(data.agencies||[]).length===0&&<p className="text-xs text-gray-400 px-2">ยังไม่มี Agency</p>}
+                {!(data.agencies||[]).length&&<p className="text-xs text-gray-400 text-center py-4">ยังไม่มี Agency</p>}
               </div>
             </div>
           </div>
+
+          {/* ── Bottom: ตารางว่าง (full width) ── */}
+          <div className="bg-gray-50 rounded-2xl border border-border p-4">
+            <h3 className="text-sm font-bold text-gray-700 mb-4">📅 ตารางว่างนักไลฟ์ (ทำซ้ำทุกสัปดาห์)</h3>
+            <div className="grid grid-cols-2 gap-5">
+              {/* Left: add form */}
+              <div>
+                <p className="text-xs text-gray-500 font-semibold mb-3">{availEditId?'✏️ แก้ไขช่วงเวลา':'➕ เพิ่มช่วงเวลาว่าง'}</p>
+                <div className="bg-white rounded-xl border border-border p-4 flex flex-col gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium mb-1 block">นักไลฟ์</label>
+                    <select value={availForm.streamerId||''} onChange={e=>setAvailForm(f=>({...f,streamerId:e.target.value}))}
+                      className="input w-full">
+                      <option value="">เลือกนักไลฟ์</option>
+                      {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium mb-1.5 block">วันในสัปดาห์</label>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {DAY_LABELS_FULL.map((lbl,i)=>(
+                        <button key={i} type="button"
+                          onClick={()=>setAvailForm(f=>{const ds=(f.days||[]);return {...f,days:ds.includes(i)?ds.filter(d=>d!==i):[...ds,i]};})}
+                          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                            (availForm.days||[]).includes(i)
+                              ? 'bg-accent text-white border-accent shadow-sm'
+                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-accent hover:text-accent'
+                          }`}>{lbl}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 font-medium mb-1 block">ช่วงเวลา</label>
+                    <div className="flex items-center gap-2">
+                      <input type="time" value={availForm.startTime||''} onChange={e=>setAvailForm(f=>({...f,startTime:e.target.value}))}
+                        className="input flex-1"/>
+                      <span className="text-gray-400 font-medium">–</span>
+                      <input type="time" value={availForm.endTime||''} onChange={e=>setAvailForm(f=>({...f,endTime:e.target.value}))}
+                        className="input flex-1"/>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={saveAvail} disabled={saving}
+                      className="flex-1 py-2 bg-accent text-white text-sm rounded-xl font-semibold hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-1.5">
+                      {saving&&<svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>}
+                      {saving?'กำลังบันทึก...':(availEditId?'💾 บันทึก':'+ เพิ่มตารางว่าง')}
+                    </button>
+                    {availEditId&&<button onClick={()=>{setAvailForm({});setAvailEditId(null);}}
+                      className="px-4 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">ยกเลิก</button>}
+                  </div>
+                </div>
+              </div>
+              {/* Right: records per streamer */}
+              <div>
+                <p className="text-xs text-gray-500 font-semibold mb-3">ตารางว่างที่บันทึกไว้</p>
+                <div className="flex flex-col gap-3 max-h-56 overflow-y-auto pr-1">
+                  {data.streamers.filter(s=>(data.availability||[]).some(a=>a.streamerId===s.id)).map(s=>{
+                    const avails = (data.availability||[]).filter(a=>a.streamerId===s.id);
+                    return (
+                      <div key={s.id} className="bg-white rounded-xl border border-border p-3">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:s.color}}/>
+                          <span className="text-sm font-semibold text-gray-800">{s.name}</span>
+                          <span className="ml-auto text-[10px] text-gray-400">{avails.length} ช่วง</span>
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          {avails.map(a=>(
+                            <div key={a.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-50 rounded-lg group">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex flex-wrap gap-1 mb-0.5">
+                                  {(a.days||[]).sort((x,y)=>x-y).map(d=>(
+                                    <span key={d} className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-semibold">{DAY_LABELS[d]}</span>
+                                  ))}
+                                </div>
+                                <span className="text-[11px] text-gray-500">{a.startTime} – {a.endTime}</span>
+                              </div>
+                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                <button onClick={()=>{setAvailForm({streamerId:a.streamerId,days:a.days,startTime:a.startTime,endTime:a.endTime});setAvailEditId(a.id);}}
+                                  className="text-[11px] text-accent px-1.5 py-0.5 rounded hover:bg-accent/10">แก้</button>
+                                <button onClick={()=>deleteAvail(a.id)}
+                                  className="text-[11px] text-red-400 px-1.5 py-0.5 rounded hover:bg-red-50">ลบ</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!(data.availability||[]).length&&(
+                    <div className="text-center py-8 text-gray-400">
+                      <p className="text-2xl mb-2">📭</p>
+                      <p className="text-xs">ยังไม่มีตารางว่าง</p>
+                      <p className="text-xs opacity-70">เพิ่มด้านซ้ายได้เลยค่ะ</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="flex justify-end mt-4">
-            <button onClick={()=>setModal(null)} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ปิด</button>
+            <button onClick={()=>setModal(null)} className="px-5 py-2 rounded-xl text-sm text-gray-500 hover:bg-gray-100">ปิด</button>
           </div>
         </Modal>
       )}
@@ -1129,7 +1724,7 @@ export default function ScheduleBoard() {
           <div className="flex gap-2 mt-4 justify-end">
             {modal.item&&<button onClick={()=>deleteBrand(modal.item.id)} className="mr-auto text-xs text-red-400 hover:text-red-600 px-2">ลบแบรนด์</button>}
             <button onClick={()=>setModal({type:'manage'})} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
-            <button onClick={saveBrand} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">บันทึก</button>
+            <button onClick={saveBrand} disabled={saving} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 disabled:opacity-50">{saving?'กำลังบันทึก...':'บันทึก'}</button>
           </div>
         </Modal>
       )}
@@ -1165,7 +1760,7 @@ export default function ScheduleBoard() {
           <div className="flex gap-2 mt-4 justify-end">
             {modal.item&&<button onClick={()=>deleteStreamer(modal.item.id)} className="mr-auto text-xs text-red-400 hover:text-red-600 px-2">ลบนักไลฟ์</button>}
             <button onClick={()=>setModal({type:'manage'})} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
-            <button onClick={saveStreamer} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">บันทึก</button>
+            <button onClick={saveStreamer} disabled={saving} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 disabled:opacity-50">{saving?'กำลังบันทึก...':'บันทึก'}</button>
           </div>
         </Modal>
       )}
@@ -1187,7 +1782,7 @@ export default function ScheduleBoard() {
           <div className="flex gap-2 mt-4 justify-end">
             {modal.item&&<button onClick={()=>deleteAgency(modal.item.id)} className="mr-auto text-xs text-red-400 hover:text-red-600 px-2">ลบเอเจนซี่</button>}
             <button onClick={()=>setModal({type:'manage'})} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
-            <button onClick={saveAgency} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">บันทึก</button>
+            <button onClick={saveAgency} disabled={saving} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 disabled:opacity-50">{saving?'กำลังบันทึก...':'บันทึก'}</button>
           </div>
         </Modal>
       )}
@@ -1227,7 +1822,7 @@ export default function ScheduleBoard() {
             <button onClick={()=>setBulkRows(r=>[...r,EMPTY_ROW()])} className="px-3 py-2 rounded-lg text-xs text-gray-500 border border-border hover:border-accent hover:text-accent transition-colors">+ เพิ่มแถว</button>
             <div className="flex gap-2">
               <button onClick={()=>setModal(null)} className="px-4 py-2 rounded-lg text-xs text-gray-500 hover:bg-gray-100">ยกเลิก</button>
-              <button onClick={submitBulk} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90">บันทึกทั้งหมด</button>
+              <button onClick={submitBulk} disabled={saving} className="px-4 py-2 rounded-lg bg-accent text-white text-xs font-semibold hover:opacity-90 disabled:opacity-50">{saving?'กำลังบันทึก...':'บันทึกทั้งหมด'}</button>
             </div>
           </div>
         </Modal>
@@ -1505,9 +2100,104 @@ export default function ScheduleBoard() {
       {/* Print View — hidden normally, shown only when printing */}
       <PrintView year={year} month={month} data={data}/>
 
+      {/* ── Top loading bar ── */}
+      {(loading||saving)&&(
+        <div className="fixed top-0 left-0 right-0 z-[60] h-0.5 overflow-hidden">
+          <div className={`h-full bg-accent animate-[loadbar_1.2s_ease-in-out_infinite] ${saving?'opacity-100':'opacity-70'}`}
+            style={{width:'100%',transformOrigin:'left'}}/>
+        </div>
+      )}
+
+      {/* ── Saving chip ── */}
+      {saving&&(
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-xs rounded-full shadow-xl font-medium pointer-events-none">
+          <svg className="animate-spin w-3.5 h-3.5 text-accent flex-shrink-0" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+            <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          กำลังบันทึก...
+        </div>
+      )}
+
+      {/* ── Bulk action bar ── */}
+      {selectMode&&(
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-3 bg-gray-900 text-white rounded-2xl shadow-2xl border border-white/10">
+          {/* count */}
+          <span className="text-sm font-bold text-white mr-1">
+            {selected.size > 0 ? `☑ ${selected.size} slot` : 'กดเลือก slot ที่ต้องการ'}
+          </span>
+          {selected.size > 0 && <>
+            <div className="w-px h-5 bg-white/20 mx-1"/>
+            {/* select all visible */}
+            <button onClick={()=>{
+              const visibleIds = data.slots.filter(s=>fBrands.size===0||fBrands.has(s.brandId)).map(s=>s.id);
+              setSelected(new Set(visibleIds));
+            }} className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">
+              เลือกทั้งหมด
+            </button>
+            {/* change status */}
+            <button onClick={()=>setBulkModal('status')}
+              className="text-xs px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-400 transition-colors font-semibold">
+              🔄 เปลี่ยนสถานะ
+            </button>
+            {/* assign streamer */}
+            <button onClick={()=>setBulkModal('streamer')}
+              className="text-xs px-3 py-1.5 rounded-lg bg-purple-500 hover:bg-purple-400 transition-colors font-semibold">
+              🎤 จัดนักไลฟ์
+            </button>
+            {/* delete */}
+            <button onClick={bulkDelete}
+              className="text-xs px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-400 transition-colors font-semibold">
+              🗑 ลบ
+            </button>
+          </>}
+          <div className="w-px h-5 bg-white/20 mx-1"/>
+          <button onClick={exitSelect} className="text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors">✕ ยกเลิก</button>
+        </div>
+      )}
+
+      {/* ── Bulk modal: change status ── */}
+      {bulkModal==='status'&&(
+        <Modal title={`เปลี่ยนสถานะ ${selected.size} slot`} onClose={()=>setBulkModal(null)}>
+          <div className="flex flex-col gap-2">
+            {[['pending','🟡 รอยืนยัน','#f59e0b'],['confirmed','🟢 ยืนยันแล้ว','#22c55e'],['approved','🔵 อนุมัติ','#3b82f6']].map(([v,l,c])=>(
+              <button key={v} onClick={()=>bulkSetStatus(v)}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl border border-border hover:border-accent hover:bg-gray-50 transition-all text-left">
+                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:c}}/>
+                <span className="text-sm font-semibold text-gray-700">{l}</span>
+                <svg className="ml-auto w-4 h-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Bulk modal: assign streamer ── */}
+      {bulkModal==='streamer'&&(
+        <Modal title={`จัดนักไลฟ์ให้ ${selected.size} slot`} onClose={()=>setBulkModal(null)}>
+          <div className="flex flex-col gap-2 max-h-72 overflow-y-auto">
+            <button onClick={()=>bulkSetStreamer(null)}
+              className="flex items-center gap-3 px-4 py-3 rounded-xl border border-border hover:border-amber-300 hover:bg-amber-50 transition-all text-left">
+              <span className="w-3 h-3 rounded-full bg-gray-300 flex-shrink-0"/>
+              <span className="text-sm font-semibold text-amber-600">⚠ ยังไม่ระบุ (unassign)</span>
+            </button>
+            {sortByName(data.streamers).map(s=>(
+              <button key={s.id} onClick={()=>bulkSetStreamer(s.id)}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl border border-border hover:border-accent hover:bg-gray-50 transition-all text-left">
+                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{backgroundColor:s.color}}/>
+                <span className="text-sm font-semibold text-gray-700">{s.name}</span>
+                <span className="text-xs text-gray-400 ml-auto">{s.type==='employee'?'ประจำ':s.type==='freelance-office'?'FL/ออฟ':s.type==='freelance-agency'?'Agency':'FL'}</span>
+              </button>
+            ))}
+          </div>
+        </Modal>
+      )}
+
       {/* Toast */}
       {toast&&(
-        <div className={`fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl text-sm shadow-lg font-medium ${toast.type==='err'?'bg-red-500 text-white':'bg-gray-900 text-white'}`}>
+        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm shadow-xl font-medium transition-all ${toast.type==='err'?'bg-red-500 text-white':'bg-gray-900 text-white'}`}>
+          {toast.type!=='err'&&<span className="text-green-400 text-base leading-none">✓</span>}
+          {toast.type==='err'&&<span className="text-base leading-none">⚠</span>}
           {toast.msg}
         </div>
       )}
@@ -1620,10 +2310,10 @@ function Btn({onClick,children,primary}){
   );
 }
 
-function Modal({title,onClose,children,wide}){
+function Modal({title,onClose,children,wide,xl}){
   return(
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm" onClick={onClose}>
-      <div className={`bg-white rounded-2xl shadow-xl mx-4 p-6 ${wide?'w-full max-w-3xl':'w-full max-w-md'}`} onClick={e=>e.stopPropagation()}>
+      <div className={`bg-white rounded-2xl shadow-xl mx-4 p-6 ${xl?'w-full max-w-5xl':wide?'w-full max-w-3xl':'w-full max-w-md'}`} onClick={e=>e.stopPropagation()}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-bold text-gray-800 text-base">{title}</h2>
           <button onClick={onClose} className="w-7 h-7 rounded-full flex items-center justify-center hover:bg-gray-100 text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>

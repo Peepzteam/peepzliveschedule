@@ -21,14 +21,36 @@ function minutesToTime(m) {
 
 function detectConflicts(slots) {
   const conflicts = new Set();
+  // Convert slot to [absoluteStart, absoluteEnd] in minutes from day-start
+  // overnight slots (endTime < startTime) get +1440 on the end
+  function slotRange(s) {
+    const start = timeToMinutes(s.startTime);
+    let end = timeToMinutes(s.endTime);
+    if (end <= start) end += 1440;
+    return [start, end];
+  }
   for (let i = 0; i < slots.length; i++) {
     for (let j = i + 1; j < slots.length; j++) {
       const a = slots[i], b = slots[j];
       if (!a.streamerId || !b.streamerId) continue;
-      if (a.streamerId !== b.streamerId || a.date !== b.date) continue;
-      const aS = timeToMinutes(a.startTime), aE = timeToMinutes(a.endTime);
-      const bS = timeToMinutes(b.startTime), bE = timeToMinutes(b.endTime);
-      if (aS < bE && bS < aE) { conflicts.add(a.id); conflicts.add(b.id); }
+      if (a.streamerId !== b.streamerId) continue;
+      // Same brand = multi-platform simultaneous stream = NOT a conflict
+      if (a.brandId && b.brandId && a.brandId === b.brandId) continue;
+      const [aS, aE] = slotRange(a);
+      const [bS, bE] = slotRange(b);
+      // Check same date overlap
+      if (a.date === b.date && aS < bE && bS < aE) {
+        conflicts.add(a.id); conflicts.add(b.id);
+      }
+      // Check overnight: slot A on date D overlaps slot B on date D+1
+      const aDate = new Date(a.date), bDate = new Date(b.date);
+      const dayDiff = Math.round((bDate - aDate) / 86400000);
+      if (dayDiff === 1 && aE > 1440) {
+        // A's overnight tail [1440, aE] vs B starting at [bS, bE]
+        if (aE - 1440 > bS) { conflicts.add(a.id); conflicts.add(b.id); }
+      } else if (dayDiff === -1 && bE > 1440) {
+        if (bE - 1440 > aS) { conflicts.add(a.id); conflicts.add(b.id); }
+      }
     }
   }
   return [...conflicts];
@@ -57,6 +79,23 @@ router.get('/data', async (req, res) => {
     const { year, month } = req.query;
     const y = parseInt(year) || new Date().getFullYear();
     const m = parseInt(month) || new Date().getMonth() + 1;
+
+    // ── auto-cleanup orphan slots (brand or streamer was deleted) ──
+    const validBrandIds    = new Set(data.brands.map(b => b.id));
+    const validStreamerIds = new Set(data.streamers.map(s => s.id));
+    const before = data.slots.length;
+    data.slots = data.slots.filter(s => validBrandIds.has(s.brandId));
+    // null-out streamerId if streamer was deleted (keep slot, just unassign)
+    data.slots = data.slots.map(s =>
+      s.streamerId && !validStreamerIds.has(s.streamerId)
+        ? { ...s, streamerId: null, streamerName: '' }
+        : s
+    );
+    // persist cleanup if anything changed
+    if (data.slots.length !== before) {
+      await writeData(data).catch(() => {});
+    }
+
     res.json({ ...data, conflicts: detectConflicts(data.slots), fifiHours: calcFifiHours(data.slots, y, m) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -73,18 +112,6 @@ router.post('/slots', async (req, res) => {
       notes: req.body.notes || '', status: req.body.status || 'pending',
       location: req.body.location || null, createdAt: new Date().toISOString(),
     };
-    const dur = (timeToMinutes(base.endTime) - timeToMinutes(base.startTime)) / 60;
-    if (dur > 3) {
-      const sessions = []; let cur = timeToMinutes(base.startTime); const end = timeToMinutes(base.endTime); let n = 1;
-      while (cur < end) {
-        const se = Math.min(cur + 180, end);
-        sessions.push({ ...base, id: randomUUID(), startTime: minutesToTime(cur), endTime: minutesToTime(se), notes: `${base.notes} (Session ${n++})`.trim() });
-        if (se < end) cur = se + 15; else break;
-      }
-      data.slots.push(...sessions);
-      await writeData(data);
-      return res.json({ slots: sessions, autoSplit: true });
-    }
     data.slots.push(base);
     addHistory(data, 'เพิ่ม Slot', `${base.date} ${base.startTime}-${base.endTime}`);
     await writeData(data);
@@ -151,9 +178,16 @@ router.put('/streamers/:id', async (req, res) => {
 router.delete('/streamers/:id', async (req, res) => {
   try {
     const data = await readData();
-    data.streamers = data.streamers.filter(s => s.id !== req.params.id);
+    const id = req.params.id;
+    const slotsRemoved = (data.slots || []).filter(s => s.streamerId === id).length;
+    data.streamers = data.streamers.filter(s => s.id !== id);
+    // cascade: remove slots belonging to this streamer
+    data.slots = (data.slots || []).filter(s => s.streamerId !== id);
+    // cascade: remove availability records
+    if (data.availability) data.availability = data.availability.filter(a => a.streamerId !== id);
+    addHistory(data, 'streamer_delete', `ลบนักไลฟ์ + ${slotsRemoved} slots`);
     await writeData(data);
-    res.json({ ok: true });
+    res.json({ ok: true, slotsRemoved });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -190,18 +224,49 @@ router.put('/brands/:id', async (req, res) => {
 router.delete('/brands/:id', async (req, res) => {
   try {
     const data = await readData();
-    data.brands = data.brands.filter(b => b.id !== req.params.id);
+    const id = req.params.id;
+    const slotsRemoved = (data.slots || []).filter(s => s.brandId === id).length;
+    data.brands = data.brands.filter(b => b.id !== id);
+    // cascade: remove all slots for this brand
+    data.slots = (data.slots || []).filter(s => s.brandId !== id);
+    addHistory(data, 'brand_delete', `ลบแบรนด์ + ${slotsRemoved} slots`);
+    await writeData(data);
+    res.json({ ok: true, slotsRemoved });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Availability ────────────────────────────────────────────
+// ─── Availability (weekly recurring schedule) ───────────────
+// shape: { id, streamerId, type:'weekly', days:[0-6], startTime, endTime }
+router.post('/availability', async (req, res) => {
+  try {
+    const data = await readData();
+    if (!data.availability) data.availability = [];
+    const record = { id: randomUUID(), ...req.body };
+    data.availability.push(record);
+    addHistory(data, 'availability_add', `${record.streamerId}`);
+    await writeData(data);
+    res.json({ ok: true, record });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/availability/:id', async (req, res) => {
+  try {
+    const data = await readData();
+    if (!data.availability) data.availability = [];
+    const idx = data.availability.findIndex(a => a.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ error: 'not found' });
+    data.availability[idx] = { ...data.availability[idx], ...req.body };
     await writeData(data);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── Availability ────────────────────────────────────────────
-router.post('/availability', async (req, res) => {
+router.delete('/availability/:id', async (req, res) => {
   try {
     const data = await readData();
-    data.availability = data.availability.filter(a => !(a.streamerId === req.body.streamerId && a.date === req.body.date));
-    if (req.body.availableFrom) data.availability.push({ streamerId: req.body.streamerId, date: req.body.date, availableFrom: req.body.availableFrom, availableTo: req.body.availableTo });
+    if (!data.availability) data.availability = [];
+    data.availability = data.availability.filter(a => a.id !== req.params.id);
     await writeData(data);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -254,7 +319,10 @@ router.delete('/agencies/:id', async (req, res) => {
   try {
     const data = await readData();
     if (!data.agencies) data.agencies = [];
-    data.agencies = data.agencies.filter(a => a.id !== req.params.id);
+    const id = req.params.id;
+    data.agencies = data.agencies.filter(a => a.id !== id);
+    // cascade: unlink streamers from this agency (don't delete streamers, just clear agencyId)
+    if (data.streamers) data.streamers = data.streamers.map(s => s.agencyId === id ? { ...s, agencyId: null } : s);
     await writeData(data);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
