@@ -10,7 +10,17 @@
     "setup": "cp .env.example .env && echo '\u2705 \u0e2a\u0e23\u0e49\u0e32\u0e07 .env \u0e41\u0e25\u0e49\u0e27 \u0e01\u0e23\u0e38\u0e13\u0e32\u0e41\u0e01\u0e49\u0e44\u0e02\u0e43\u0e2a\u0e48 API Keys \u0e01\u0e48\u0e2d\u0e19\u0e23\u0e31\u0e19\u0e04\u0e48\u0e32'"
   },
   "dependencies": {
-    "serverless-http": "^3.2.0"
+    "serverless-http": "^3.2.0",
+    "@supabase/supabase-js": "^2.107.0",
+    "ws": "^8.18.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-session": "^1.18.1",
+    "googleapis": "^144.0.0",
+    "qs": "^6.13.1"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
