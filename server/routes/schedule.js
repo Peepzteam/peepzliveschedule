@@ -5,13 +5,37 @@ const fs = require('fs');
 const { randomUUID } = require('crypto');
 const { google } = require('googleapis');
 
-const DATA_FILE = path.join(__dirname, '../data/schedule.json');
+const DATA_FILE  = path.join(__dirname, '../data/schedule.json');
+const SEED_FILE  = path.join(__dirname, '../data/schedule.seed.json');
+
+// สร้างไฟล์ข้อมูลถ้ายังไม่มี (deploy ครั้งแรก หรือ volume ยังไม่ mount)
+function ensureDataFile() {
+  const dir = path.dirname(DATA_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(DATA_FILE)) {
+    if (fs.existsSync(SEED_FILE)) {
+      // copy seed → data เพื่อ preserve ข้อมูลเริ่มต้น
+      fs.copyFileSync(SEED_FILE, DATA_FILE);
+      console.log('📦 initialized schedule.json from seed');
+    } else {
+      // สร้างไฟล์เปล่า
+      fs.writeFileSync(DATA_FILE, JSON.stringify({
+        streamers: [], brands: [], slots: [],
+        availability: [], brandStatus: {}, agencies: [], history: []
+      }, null, 2));
+      console.log('📦 initialized empty schedule.json');
+    }
+  }
+}
+ensureDataFile();
 
 function readData() {
+  ensureDataFile();
   return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 }
 
 function writeData(data) {
+  ensureDataFile();
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 

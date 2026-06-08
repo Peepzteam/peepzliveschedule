@@ -1,0 +1,7 @@
+node_modules/
+.env
+.env.local
+client/dist/
+
+# ข้อมูลจริงของทีม — ห้าม commit ไม่งั้นข้อมูลหายทุกครั้งที่ deploy
+server/data/schedule.json
