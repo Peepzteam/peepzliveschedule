@@ -107,7 +107,7 @@ function CellBlock({ slot: s, pos, sById, bById, conflictSet, onSlot }) {
   const streamer = sById[s.streamerId], brand = bById[s.brandId];
   const noStreamer = !s.streamerId && !s.streamerName;
   const isConflict = conflictSet.has(s.id);
-  const color = noStreamer ? '#9ca3af' : (streamer?.color || '#9ca3af');
+  const color = brand?.color || streamer?.color || '#9ca3af';
   const isStart = pos === 'start' || pos === 'single';
   const isEnd   = pos === 'end'   || pos === 'single';
   return (
