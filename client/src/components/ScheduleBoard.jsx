@@ -971,7 +971,16 @@ export default function ScheduleBoard() {
               </select>
             </Field>
             <Field label="สีประจำตัว"><input type="color" value={form.color||'#888888'} onChange={e=>setForm(f=>({...f,color:e.target.value}))} className="h-9 w-full rounded-lg cursor-pointer border border-border"/></Field>
-            {form.type==='freelance-agency'&&<Field label="Agency Admin" className="col-span-2"><input type="text" value={form.agencyAdmin||''} onChange={e=>setForm(f=>({...f,agencyAdmin:e.target.value}))} className="input w-full"/></Field>}
+            {form.type==='freelance-agency'&&(
+              <Field label="Agency Admin" className="col-span-2">
+                <select value={form.agencyAdmin||''} onChange={e=>setForm(f=>({...f,agencyAdmin:e.target.value}))} className="input w-full">
+                  <option value="">-- เลือก Admin --</option>
+                  {sortByName(data.streamers.filter(s=>s.type==='employee'||s.type==='freelance-office')).map(s=>(
+                    <option key={s.id} value={s.name}>{s.name}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
           </div>
           <div className="flex gap-2 mt-4 justify-end">
             {modal.item&&<button onClick={()=>deleteStreamer(modal.item.id)} className="mr-auto text-xs text-red-400 hover:text-red-600 px-2">ลบนักไลฟ์</button>}
