@@ -54,14 +54,14 @@ function getAvailableStreamers(data, date, startTime, endTime, excludeSlotId = n
     if (busy) return { ...streamer, avail: 'busy' };
 
     // 2. เช็ค availability schedule
-    const avails = (data.availability || []).filter(a => a.streamerId === streamer.id && a.type === 'weekly');
+    const avails = (data.availability || []).filter(a => a.streamerId === streamer.id);
     if (avails.length === 0) return { ...streamer, avail: 'unknown' };
 
-    const covered = avails.some(a =>
-      (a.days || []).includes(dow) &&
-      timeToMinutes(a.startTime) <= sStart &&
-      timeToMinutes(a.endTime)   >= sEnd
-    );
+    const covered = avails.some(a => {
+      const timeOk = timeToMinutes(a.startTime) <= sStart && timeToMinutes(a.endTime) >= sEnd;
+      if (a.type === 'dates') return (a.dates||[]).includes(date) && timeOk;
+      return (a.days||[]).includes(dow) && timeOk; // weekly
+    });
     return { ...streamer, avail: covered ? 'free' : 'off' };
   });
 }
@@ -856,14 +856,20 @@ export default function ScheduleBoard() {
   }
 
   // ── availability CRUD ─────────────────────────────────────
-  const [availForm, setAvailForm] = useState({}); // { streamerId, days:[], startTime, endTime }
+  const [availForm, setAvailForm] = useState({}); // { streamerId, availType:'weekly'|'dates', days:[], dates:[], startTime, endTime }
   const [availEditId, setAvailEditId] = useState(null);
 
   async function saveAvail() {
-    if (!availForm.streamerId || !availForm.days?.length || !availForm.startTime || !availForm.endTime)
-      return toast_show('กรอกข้อมูลให้ครบ', 'err');
+    const t = availForm.availType || 'weekly';
+    if (!availForm.streamerId) return toast_show('เลือกนักไลฟ์ก่อน', 'err');
+    if (t === 'weekly' && !availForm.days?.length) return toast_show('เลือกวันในสัปดาห์ด้วย', 'err');
+    if (t === 'dates'  && !availForm.dates?.length) return toast_show('เลือกวันจากปฏิทินด้วย', 'err');
+    if (!availForm.startTime || !availForm.endTime) return toast_show('ใส่ช่วงเวลาด้วย', 'err');
     await withSaving(async()=>{
-      const payload = { ...availForm, type: 'weekly' };
+      const payload = { streamerId: availForm.streamerId, type: t,
+        days:  t==='weekly' ? (availForm.days||[]) : [],
+        dates: t==='dates'  ? (availForm.dates||[]) : [],
+        startTime: availForm.startTime, endTime: availForm.endTime };
       if (availEditId) { await API_put(`/availability/${availEditId}`, payload); toast_show('✓ แก้ไขตารางว่างแล้ว'); }
       else { await API_post('/availability', payload); toast_show('✓ บันทึกตารางว่างแล้ว'); }
       setAvailForm({}); setAvailEditId(null); load(true);
@@ -1617,12 +1623,13 @@ export default function ScheduleBoard() {
 
           {/* ── Bottom: ตารางว่าง (full width) ── */}
           <div className="bg-gray-50 rounded-2xl border border-border p-4">
-            <h3 className="text-sm font-bold text-gray-700 mb-4">📅 ตารางว่างนักไลฟ์ (ทำซ้ำทุกสัปดาห์)</h3>
+            <h3 className="text-sm font-bold text-gray-700 mb-4">📅 ตารางว่างนักไลฟ์</h3>
             <div className="grid grid-cols-2 gap-5">
               {/* Left: add form */}
               <div>
                 <p className="text-xs text-gray-500 font-semibold mb-3">{availEditId?'✏️ แก้ไขช่วงเวลา':'➕ เพิ่มช่วงเวลาว่าง'}</p>
                 <div className="bg-white rounded-xl border border-border p-4 flex flex-col gap-3">
+                  {/* streamer */}
                   <div>
                     <label className="text-xs text-gray-500 font-medium mb-1 block">นักไลฟ์</label>
                     <select value={availForm.streamerId||''} onChange={e=>setAvailForm(f=>({...f,streamerId:e.target.value}))}
@@ -1631,20 +1638,73 @@ export default function ScheduleBoard() {
                       {sortByName(data.streamers).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   </div>
-                  <div>
-                    <label className="text-xs text-gray-500 font-medium mb-1.5 block">วันในสัปดาห์</label>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {DAY_LABELS_FULL.map((lbl,i)=>(
-                        <button key={i} type="button"
-                          onClick={()=>setAvailForm(f=>{const ds=(f.days||[]);return {...f,days:ds.includes(i)?ds.filter(d=>d!==i):[...ds,i]};})}
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                            (availForm.days||[]).includes(i)
-                              ? 'bg-accent text-white border-accent shadow-sm'
-                              : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-accent hover:text-accent'
-                          }`}>{lbl}</button>
-                      ))}
-                    </div>
+                  {/* type toggle */}
+                  <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+                    {[['weekly','ทุกสัปดาห์'],['dates','เลือกวันจากปฏิทิน']].map(([v,l])=>(
+                      <button key={v} type="button" onClick={()=>setAvailForm(f=>({...f,availType:v}))}
+                        className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                          (availForm.availType||'weekly')===v ? 'bg-white shadow text-accent' : 'text-gray-500 hover:text-gray-700'
+                        }`}>{l}</button>
+                    ))}
                   </div>
+                  {/* weekly: day buttons */}
+                  {(availForm.availType||'weekly')==='weekly'&&(
+                    <div>
+                      <label className="text-xs text-gray-500 font-medium mb-1.5 block">วันในสัปดาห์</label>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {DAY_LABELS_FULL.map((lbl,i)=>(
+                          <button key={i} type="button"
+                            onClick={()=>setAvailForm(f=>{const d2=(f.days||[]);return {...f,days:d2.includes(i)?d2.filter(d=>d!==i):[...d2,i]};})}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                              (availForm.days||[]).includes(i)
+                                ? 'bg-accent text-white border-accent shadow-sm'
+                                : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-accent hover:text-accent'
+                            }`}>{lbl}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* dates: mini calendar */}
+                  {availForm.availType==='dates'&&(()=>{
+                    const calDays = getDaysInMonth(year, month);
+                    const firstDow = calDays[0].getDay(); // 0=Sun
+                    const selDates = availForm.dates||[];
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-xs text-gray-500 font-medium">คลิกเลือกวัน ({MONTH_TH[month]})</label>
+                          {selDates.length>0&&<button type="button" onClick={()=>setAvailForm(f=>({...f,dates:[]}))}
+                            className="text-[10px] text-gray-400 hover:text-red-400">ล้าง</button>}
+                        </div>
+                        <div className="grid grid-cols-7 gap-0.5">
+                          {DAY_LABELS.map(d=><div key={d} className="text-center text-[9px] text-gray-400 font-bold py-0.5">{d}</div>)}
+                          {Array(firstDow).fill(null).map((_,i)=><div key={'e'+i}/>)}
+                          {calDays.map(date=>{
+                            const dStr = ds(date);
+                            const isSel = selDates.includes(dStr);
+                            const dow2  = date.getDay();
+                            return (
+                              <button key={dStr} type="button"
+                                onClick={()=>setAvailForm(f=>{const d2=f.dates||[];return {...f,dates:d2.includes(dStr)?d2.filter(x=>x!==dStr):[...d2,dStr]};})}
+                                className={`aspect-square rounded-lg text-[11px] font-semibold transition-all ${
+                                  isSel ? 'bg-accent text-white shadow-sm' :
+                                  dow2===0||dow2===6 ? 'text-blue-400 hover:bg-blue-50' :
+                                  'text-gray-600 hover:bg-gray-100'
+                                }`}>
+                                {date.getDate()}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {selDates.length>0&&(
+                          <div className="mt-1.5 text-[10px] text-accent font-semibold">
+                            เลือก {selDates.length} วัน
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {/* time */}
                   <div>
                     <label className="text-xs text-gray-500 font-medium mb-1 block">ช่วงเวลา</label>
                     <div className="flex items-center gap-2">
@@ -1681,17 +1741,32 @@ export default function ScheduleBoard() {
                         </div>
                         <div className="flex flex-col gap-1.5">
                           {avails.map(a=>(
-                            <div key={a.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-gray-50 rounded-lg group">
+                            <div key={a.id} className="flex items-start gap-2 px-2.5 py-1.5 bg-gray-50 rounded-lg group">
                               <div className="flex-1 min-w-0">
-                                <div className="flex flex-wrap gap-1 mb-0.5">
-                                  {(a.days||[]).sort((x,y)=>x-y).map(d=>(
-                                    <span key={d} className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-semibold">{DAY_LABELS[d]}</span>
-                                  ))}
-                                </div>
+                                {/* weekly type */}
+                                {(a.type==='weekly'||!a.type)&&(
+                                  <div className="flex flex-wrap gap-1 mb-0.5">
+                                    {(a.days||[]).sort((x,y)=>x-y).map(d=>(
+                                      <span key={d} className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-semibold">{DAY_LABELS[d]}</span>
+                                    ))}
+                                    <span className="text-[9px] text-gray-400 self-center">ทุกสัปดาห์</span>
+                                  </div>
+                                )}
+                                {/* dates type */}
+                                {a.type==='dates'&&(
+                                  <div className="flex flex-wrap gap-0.5 mb-0.5">
+                                    {(a.dates||[]).sort().slice(0,8).map(d=>(
+                                      <span key={d} className="text-[9px] px-1 py-0.5 rounded bg-accent/10 text-accent font-semibold">
+                                        {parseInt(d.slice(8))}
+                                      </span>
+                                    ))}
+                                    {(a.dates||[]).length>8&&<span className="text-[9px] text-gray-400">+{(a.dates||[]).length-8}</span>}
+                                  </div>
+                                )}
                                 <span className="text-[11px] text-gray-500">{a.startTime} – {a.endTime}</span>
                               </div>
                               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                                <button onClick={()=>{setAvailForm({streamerId:a.streamerId,days:a.days,startTime:a.startTime,endTime:a.endTime});setAvailEditId(a.id);}}
+                                <button onClick={()=>{setAvailForm({streamerId:a.streamerId,availType:a.type||'weekly',days:a.days||[],dates:a.dates||[],startTime:a.startTime,endTime:a.endTime});setAvailEditId(a.id);}}
                                   className="text-[11px] text-accent px-1.5 py-0.5 rounded hover:bg-accent/10">แก้</button>
                                 <button onClick={()=>deleteAvail(a.id)}
                                   className="text-[11px] text-red-400 px-1.5 py-0.5 rounded hover:bg-red-50">ลบ</button>
